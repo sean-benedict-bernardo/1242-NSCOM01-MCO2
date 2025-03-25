@@ -22,12 +22,32 @@ RESPONSE_MESSAGES = {
     505: "Version Not Supported",
 }
 
+
 class SipPacket:
     """
     This class abstracts SIP packets and includes SDP body.
     """
 
-    def __init__(self, is_response: bool, method: str | None, res_code: int | None, src_ip: str, dest_ip: str, rtp_port: int, call_id: str, cseq: int):
+    _hasinit = False
+
+    def __init__(
+        self,
+        is_response: bool = False,
+        method: str | None = None,
+        res_code: int | None = None,
+        src_ip: str = 0,
+        dest_ip: str = 0,
+        rtp_port: int = 0,
+        call_id: str = "",
+        cseq: int = 0,
+        packet: bytes = b"",
+    ):
+        if packet != b"":
+            self._frompacket(packet)
+            return
+
+        print("Creating new SIP packet")
+
         self.is_response = is_response
         self.src_ip = src_ip
         self.dest_ip = dest_ip
@@ -35,7 +55,7 @@ class SipPacket:
         if is_response:
             self.response = res_code
         else:
-            self.method = method
+            self.method = method.upper()
 
         self.call_id = call_id
         self.cseq = cseq
@@ -49,54 +69,152 @@ class SipPacket:
             "Contact": f"<sip:{src_ip}>",
         }
 
-        self.body = {
-            "v": 0,
-            "o": "- 0 0 IN IP4 " + src_ip,
-            "s": "SKOIP Call",
-            "c": "IN IP4",
-            "t": "0 0",
-            "m": f"audio {rtp_port} RTP/AVP 0",
-        }
+        if method and method in ("INVITE", "ACK"):
+            self.body = {
+                "v": 0,
+                "o": "- 0 0 IN IP4 " + src_ip,
+                "s": "SKOIP Call",
+                "c": "IN IP4",
+                "t": "0 0",
+                "m": f"audio {rtp_port} RTP/AVP 0",
+            }
 
-    def __init__(self, packet: bytes):
+    def _frompacket(self, packet: bytes):
         extracted = self.decode(packet)
 
-        self.src_ip = extracted["src_ip"]
-        self.dest_ip = extracted["dest_ip"]
-        self.method = extracted["method"]
-        self.call_id = extracted["call_id"]
-        self.cseq = extracted["cseq"]
-        self.fields = extracted["fields"]
-        self.body = extracted["body"]
+        self.is_response = extracted["is_response"]
+        if self.is_response:
+            self.response = extracted["method"]
+        else:
+            self.method = extracted["method"]
 
-    def encode(self):
+        self.src_ip = extracted["From"].strip("<sip:>")
+        self.dest_ip = extracted["To"].strip("<sip:>")
+        self.call_id = extracted["Call-ID"]
+        self.cseq = int(extracted["CSeq"].split(" ")[0])
+
+        self.fields = {
+            "Via": extracted["Via"],
+            "From": extracted["From"],
+            "To": extracted["To"],
+            "Call-ID": extracted["Call-ID"],
+            "CSeq": extracted["CSeq"],
+            "Contact": extracted["Contact"],
+        }
+
+        if "body" in extracted:
+            self.body = extracted.get("body", {})
+
+    def encode(self) -> bytes:
         message = ""
 
         if self.is_response:
-            message += "SIP/2.0 200 OK\r\n"
+            message += f"SIP/2.0 {self.response} {RESPONSE_MESSAGES[self.response]}\r\n"
+        else:
+            message += f"{self.method} sip:{self.dest_ip} SIP/2.0\r\n"
 
+        # encode fields
+        for key, val in self.fields.items():
+            message += f"{key}: {val}\r\n"
 
-        pass
+        if hasattr(self, "body") and self.body:
+            message += "\r\n"
+            for key, val in self.body.items():
+                message += f"{key}={val}\r\n"
+
+        return message.encode()
 
     def decode(self, byte_stream):
         """Decode the SIP packet."""
-        msg_str = byte_stream.decode()
-        headers, body = msg_str.split("\r\n\r\n")
+        msg_str = byte_stream.decode().split("\r\n\r\n")
 
-        headers = headers.split("\r\n")
-        body = body.split("\r\n")
+        headers, body = "", ""
 
-        packet = {}
+        headers = msg_str[0].split("\r\n")
+        if len(msg_str) == 2:
+            body = msg_str[1].strip("\r\n").split("\r\n")
+
+        decoded_msg = {}
 
         # check first line if it is a request or response
-        if "SIP/2.0" in lines[0]:
-            is_response = True
-            method = None
+        req_res_line = headers.pop(0).split(" ")
+
+        if req_res_line[0] == "SIP/2.0":
+            decoded_msg["is_response"] = True
+            decoded_msg["method"] = int(req_res_line[1])
+        else:
+            decoded_msg["is_response"] = False
+            decoded_msg["method"] = req_res_line[0]
+
+        # decode headers
+        for header in headers:
+            header = header.split(": ")
+
+            if len(header) < 2:
+                continue
+
+            key, val = header[0], header[1]
+            decoded_msg[key] = val
+
+        # decode body
+        if body:
+            decoded_msg["body"] = {}
+            for line in body:
+                line = line.split("=")
+                if len(line) < 2:
+                    continue
+                key, val = line[0], line[1]
+                decoded_msg["body"][key] = val
+
+        return decoded_msg
 
     def getmessage(self):
         """Return SIP message."""
 
-        return self.message
+        return self.encode().decode()
+
+
+if __name__ == "__main__":
+    """Test SIP packet encoding and decoding."""
+    sip_inv = SipPacket(
+        is_response=False,
+        method="INVITE",
+        res_code=None,
+        src_ip="0.0.0.0",
+        dest_ip="1.1.1.1",
+        rtp_port=1234,
+        call_id="1234",
+        cseq=1,
+    )
+
+    sip_ack = SipPacket(
+        is_response=True,
+        method="ACK",
+        res_code=200,
+        src_ip="1.1.1.1",
+        dest_ip="0.0.0.0",
+        rtp_port=1234,
+        call_id="1234",
+        cseq=1,
+    )
+
+    sip_trying = SipPacket(
+        is_response=True,
+        method="TRYING",
+        res_code=100,
+        src_ip="1.1.1.1",
+        dest_ip="0.0.0.0",
+        rtp_port=1234,
+        call_id="1234",
+        cseq=1,
+    )
+
+    print(sip_inv.encode().decode())
+    print(sip_ack.encode().decode())
+
+    decode_test = SipPacket(packet=sip_trying.encode())
+
+    print(decode_test.getmessage())
 
 
 class RtpPacket:
