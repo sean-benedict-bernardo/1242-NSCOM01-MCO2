@@ -4,17 +4,22 @@ import tkinter.messagebox as tkmb
 import socket
 import threading
 import random
+import os
 
-import headers
+from headers import SIPPacket, RTPPacket
 
 APPNAME = "SKOIP"
 
 SIP_PORT = 5060
+SIP_PACKET_SIZE = 1024
 
 
 def log_message(client: str, message: str):
     print(f"{client}: {message}")
 
+def make_dir():
+    if not os.path.exists("files"):
+        os.makedirs("files")
 
 class Client:
     def __init__(self):
@@ -25,7 +30,6 @@ class Client:
 
         self.active_call = None  # thread of active call, this will be used by sip server to send 486: Busy
         self.call = {}
-        self.call["id"] = None  # call id of active call
         self.cseq = 1  # cseq of active call
 
         self.keep_threads = True
@@ -139,7 +143,6 @@ class Client:
         )
         self.widgets["mic_status"].grid(row=8, column=1)
 
-
     """
     Controller Methods Below
     """
@@ -148,7 +151,6 @@ class Client:
         """Connect to the recipient IP."""
         dest_ip = self.widgets["recipient_ip_entry"].get()
 
-
         def is_valid_ip(ip: str) -> bool:
             """Verify if IP address is valid IPv4 address."""
 
@@ -156,23 +158,21 @@ class Client:
 
             if len(octets) != 4:
                 return False
-            
+
             for octet in octets:
                 if not octet.isdigit() or int(octet) < 0 or int(octet) > 255:
                     return False
-                
+
             return True
 
         # verify if the IP is valid
         if not is_valid_ip(dest_ip):
             self.display_message("Please enter a valid IP address.")
             return
-        
+
         # send an INVITE request
         # TODO:
         # self.send_invite((dest_ip, SIP_PORT))
-
-        
 
     """
     SIP Methods
@@ -185,14 +185,30 @@ class Client:
             call_id = str(hex(random.randint(1000000000, 9999999999)))[2:]
             return call_id
 
-        fields = headers.make_sip_headers(self.ip, addr[0], make_call_id(), self.cseq)
-        self.cseq += 1
+        def make_branch():
+            cookie = "z9hG4bK"  # RFC 3261
+            branch = str(hex(random.randint(1000000000, 9999999999)))[2:10]
+            return cookie + branch
 
-        body = headers.make_sdp_body()
-        fields["Content-Type"] = "application/sdp"
-        fields["Content-Length"] = len(body)
+        def select_rtp_port():
+            # select a random port between 1024 and 65535
+            candidate = random.randint(1024, 65535)
 
-        message = headers.make_sip_request("INVITE", fields=fields)
+            if candidate % 2 == 0:
+                candidate -= 1
+
+            return candidate
+
+        # create a new call
+        self.call["Call-ID"] = make_call_id()
+        self.call["Branch"] = make_branch()
+
+        invite_msg = SIPPacket(
+            is_response=False,
+            method="INVITE",
+            src_ip=self.ip,
+            dest_ip=addr[0],
+        ).encode()
 
         pass
 
@@ -219,25 +235,33 @@ class Client:
         try:
             while self.keep_threads:
                 try:
-                    data, addr = self.socket.recv(1024)
-                    log_message(addr, f"Received SIP message: {data.decode()}")
+                    data, addr = self.socket.recvfrom(SIP_PACKET_SIZE)
+                    
+                    extracted = SIPPacket(packet=data)
 
                     if self.active_call:
                         # send 486: Busy Here
-                        msg = headers.make_sip_response(486)
+                        response = SIPPacket(
+                            is_response=True,
+                            response=486,
+                            src_ip=self.ip,
+                            dest_ip=addr[0],
+                            call_id=extracted.getcall_id(),
+                            cseq=extracted.getcseq(),
+                        )
 
-                        self.socket.sendto(msg, addr)
-                        log_message(addr, f"Sent SIP message: {msg.decode()}")
+                        self.socket.sendto(response.encode(), addr)
+                        log_message(addr, f"Sent SIP message: {extracted.getmessage()}")
+                    else:
+                        self.handle_sip(data, addr)
                 except socket.timeout:
                     continue
         finally:
             self.socket.close()
 
-
     """
     RTP Methods
     """
-
 
     """
     RTCP Methods

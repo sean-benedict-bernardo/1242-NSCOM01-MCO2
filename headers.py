@@ -23,7 +23,7 @@ RESPONSE_MESSAGES = {
 }
 
 
-class SipPacket:
+class SIPPacket:
     """
     This class abstracts SIP packets and includes SDP body.
     """
@@ -61,7 +61,7 @@ class SipPacket:
         self.cseq = cseq
 
         self.fields = {
-            "Via": "SIP/2.0/UDP",
+            "Via": "SIP/2.0/UDP " + src_ip,
             "From": f"<sip:{src_ip}>",
             "To": f"<sip:{dest_ip}>",
             "Call-ID": call_id,
@@ -176,7 +176,7 @@ class SipPacket:
 
 if __name__ == "__main__":
     """Test SIP packet encoding and decoding."""
-    sip_inv = SipPacket(
+    sip_inv = SIPPacket(
         is_response=False,
         method="INVITE",
         res_code=None,
@@ -187,7 +187,7 @@ if __name__ == "__main__":
         cseq=1,
     )
 
-    sip_ack = SipPacket(
+    sip_ack = SIPPacket(
         is_response=True,
         method="ACK",
         res_code=200,
@@ -198,7 +198,7 @@ if __name__ == "__main__":
         cseq=1,
     )
 
-    sip_trying = SipPacket(
+    sip_trying = SIPPacket(
         is_response=True,
         method="TRYING",
         res_code=100,
@@ -212,12 +212,12 @@ if __name__ == "__main__":
     print(sip_inv.encode().decode())
     print(sip_ack.encode().decode())
 
-    decode_test = SipPacket(packet=sip_trying.encode())
+    decode_test = SIPPacket(packet=sip_trying.encode())
 
     print(decode_test.getmessage())
 
 
-class RtpPacket:
+class RTPPacket:
     """
     This class abstracts RTP packets. Implementation taken from
     [Lab#9] Programming Task: Streaming Video with RTSP and RTP.
