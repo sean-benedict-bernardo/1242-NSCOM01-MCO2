@@ -2,6 +2,8 @@ import socket
 from audio import AudioStream, AudioPlayer
 import headers
 import time
+import threading
+
 
 class TestBench:
 
@@ -14,11 +16,15 @@ class TestBench:
 
         self.num_timeout = 0
 
-        self.listen_rtp()
+        self.rtp_thread = threading.Thread(target=self.listen_rtp, daemon=True)
+        self.last_packet_time = time.time()
+
+        self.rtp_thread.start()
+        self.rtp_thread.join()
 
     def listen_rtp(self):
         self.socket.bind((self.ip, 6969))
-        self.socket.settimeout(3)
+        self.socket.settimeout(1)
 
         current_frame = 0
 
@@ -39,18 +45,20 @@ class TestBench:
                 if packet.seqnum() < current_frame:
                     continue
 
-                self.audio_player.play_audio_packet(payload)
+                self.last_packet_time = time.time()
+
+                if self.num_timeout != 0:
+                    self.num_timeout = 0
+                buff_size = self.audio_player.play_audio_packet(payload)
             except socket.timeout:
                 # close audio player to save resources
                 if self.audio_player.playing:
                     self.audio_player.stop()
-                    print("Closing audio player")
 
                 self.num_timeout += 1
 
-                if self.num_timeout > 3:
+                if time.time() - self.last_packet_time > 5:
                     break
-                
 
     def close(self):
         self.audio_player.stop()
