@@ -30,7 +30,7 @@ class SIPPacket:
 
     _hasinit = False
 
-    def __init__(
+    def encode(
         self,
         is_response: bool = False,
         method: str | None = None,
@@ -40,13 +40,7 @@ class SIPPacket:
         rtp_port: int = 0,
         call_id: str = "",
         cseq: int = 0,
-        packet: bytes = b"",
-    ):
-        if packet != b"":
-            self._frompacket(packet)
-            return
-
-        print("Creating new SIP packet")
+    ) -> bytes:
 
         self.is_response = is_response
         self.src_ip = src_ip
@@ -79,33 +73,51 @@ class SIPPacket:
                 "m": f"audio {rtp_port} RTP/AVP 0",
             }
 
-    def _frompacket(self, packet: bytes):
-        extracted = self.decode(packet)
+    def decode(self, packet: bytes) -> None:
+        """Decode the SIP packet."""
 
-        self.is_response = extracted["is_response"]
-        if self.is_response:
-            self.response = extracted["method"]
+        msg_str = packet.decode().split("\r\n\r\n")
+
+        headers, body = "", ""
+
+        headers = msg_str[0].split("\r\n")
+        if len(msg_str) == 2:
+            body = msg_str[1].strip("\r\n").split("\r\n")
+
+        self.fields = {}
+
+        # check first line if it is a request or response
+        req_res_line = headers.pop(0).split(" ")
+
+        if req_res_line[0] == "SIP/2.0":
+            self.is_response["is_response"] = True
+            self.response["method"] = int(req_res_line[1])
         else:
-            self.method = extracted["method"]
+            self.is_response["is_response"] = False
+            self.method["method"] = req_res_line[0]
 
-        self.src_ip = extracted["From"].strip("<sip:>")
-        self.dest_ip = extracted["To"].strip("<sip:>")
-        self.call_id = extracted["Call-ID"]
-        self.cseq = int(extracted["CSeq"].split(" ")[0])
+        # decode headers
+        for header in headers:
+            header = header.split(": ")
 
-        self.fields = {
-            "Via": extracted["Via"],
-            "From": extracted["From"],
-            "To": extracted["To"],
-            "Call-ID": extracted["Call-ID"],
-            "CSeq": extracted["CSeq"],
-            "Contact": extracted["Contact"],
-        }
+            if len(header) < 2:
+                continue
 
-        if "body" in extracted:
-            self.body = extracted.get("body", {})
+            key, val = header[0], header[1]
+            self.fields[key] = val
 
-    def encode(self) -> bytes:
+        # decode body
+        if body:
+            self.body = {}
+            for line in body:
+                line = line.split("=")
+                if len(line) < 2:
+                    continue
+                key, val = line[0], line[1]
+                self.body[key] = val
+
+    def getpacket(self):
+        """Return SIP packet."""
         message = ""
 
         if self.is_response:
@@ -124,59 +136,11 @@ class SIPPacket:
 
         return message.encode()
 
-    def decode(self, byte_stream):
-        """Decode the SIP packet."""
-        msg_str = byte_stream.decode().split("\r\n\r\n")
-
-        headers, body = "", ""
-
-        headers = msg_str[0].split("\r\n")
-        if len(msg_str) == 2:
-            body = msg_str[1].strip("\r\n").split("\r\n")
-
-        decoded_msg = {}
-
-        # check first line if it is a request or response
-        req_res_line = headers.pop(0).split(" ")
-
-        if req_res_line[0] == "SIP/2.0":
-            decoded_msg["is_response"] = True
-            decoded_msg["method"] = int(req_res_line[1])
-        else:
-            decoded_msg["is_response"] = False
-            decoded_msg["method"] = req_res_line[0]
-
-        # decode headers
-        for header in headers:
-            header = header.split(": ")
-
-            if len(header) < 2:
-                continue
-
-            key, val = header[0], header[1]
-            decoded_msg[key] = val
-
-        # decode body
-        if body:
-            decoded_msg["body"] = {}
-            for line in body:
-                line = line.split("=")
-                if len(line) < 2:
-                    continue
-                key, val = line[0], line[1]
-                decoded_msg["body"][key] = val
-
-        return decoded_msg
-
-    def getmessage(self):
-        """Return SIP message."""
-
-        return self.encode().decode()
-
 
 if __name__ == "__main__":
     """Test SIP packet encoding and decoding."""
-    sip_inv = SIPPacket(
+    sip_inv = SIPPacket()
+    sip_inv.encode(
         is_response=False,
         method="INVITE",
         res_code=None,
@@ -187,7 +151,8 @@ if __name__ == "__main__":
         cseq=1,
     )
 
-    sip_ack = SIPPacket(
+    sip_ack = SIPPacket()
+    sip_ack.encode(
         is_response=True,
         method="ACK",
         res_code=200,
@@ -198,16 +163,8 @@ if __name__ == "__main__":
         cseq=1,
     )
 
-    sip_trying = SIPPacket(
-        is_response=True,
-        method="TRYING",
-        res_code=100,
-        src_ip="1.1.1.1",
-        dest_ip="0.0.0.0",
-        rtp_port=1234,
-        call_id="1234",
-        cseq=1,
-    )
+    sip_trying = SIPPacket()
+    sip_trying.decode(sip_inv.encode())
 
     print(sip_inv.encode().decode())
     print(sip_ack.encode().decode())
