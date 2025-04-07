@@ -227,53 +227,6 @@ class SIPPacket:
         return message.encode()
 
 
-if __name__ == "__main__":
-    """Test SIP packet encoding and decoding."""
-    sip_inv = SIPPacket()
-    sip_inv.encode(
-        is_response=False,
-        method="INVITE",
-        res_code=None,
-        src_ip="0.0.0.0",
-        dest_ip="1.1.1.1",
-        rtp_port=1235,
-        call_id="1234",
-        cseq=1,
-        branch="1234",
-        codec_type="LPCM",
-        codec_pt=10,
-        codec_rate=44100,
-        codec_channels=2,
-    )
-
-    # print packet
-    print(sip_inv.getpacket().decode())
-
-    # sip_ack = SIPPacket()
-    # sip_ack.encode(
-    #     is_response=True,
-    #     method="ACK",
-    #     res_code=200,
-    #     src_ip="1.1.1.1",
-    #     dest_ip="0.0.0.0",
-    #     rtp_port=1235,
-    #     call_id="1234",
-    #     cseq=1,
-    # )
-
-    sip_inv2 = SIPPacket()
-    sip_inv2.decode(sip_inv.getpacket())
-
-    print("=====================")
-
-    print(sip_inv2.getpacket().decode())
-
-
-    # decode_test = SIPPacket(packet=sip_trying.getpacket())
-
-    # print(decode_test.getmessage())
-
-
 class RTPPacket:
     """
     This class abstracts RTP packets. Implementation taken from
@@ -373,32 +326,278 @@ RTCP_PAYLOAD_TYPES = {
 }
 
 
+def ntp_timestamp() -> int:
+    """Get NTP timestamp."""
+    # See RFC 1305 for NTP timestamp format
+    import time
+
+    ntp_time = int(time.time() + 2208988800)  # RFC 868
+    return ntp_time
+
+
 class RTCPPacket:
-    HEADER_SIZE = 4
+    """This class abstracts RTCP packets, specfically Sender Report (SR) and Receiver Report (RR)."""
+
+    HEADER_SIZE = 8
 
     header = bytearray(HEADER_SIZE)
 
-    def encode(self, PT, reports: list):
-        """Encode the RTCP packet."""
+    def __init__(
+        self,
+        payload_type: int,
+        report_count: int = 0,
+        length: int = 0,
+        ssrc: int = 0,
+        version: int = 2,
+    ):
+        self.version = version
+        self.padding = 0
+        self.extension = 0
+        self.report_count = report_count
+        self.payload_type = payload_type
+        self.ssrc = ssrc
 
-        #   0                   1                   2                   3
-        #   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        # RTCP common header format
+        #  0                   1                   2                   3
+        #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
         # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
         # |V=2|P|    RC   |   PT=200      |             length            |
         # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-        self.version = 2
-        self.padding = 0
-        self.extension = 0
-        self.report_count = len(reports)
-        self.ssrc = 0
-        self.payload_type = PT
+        # |                  SSRC of sender (SSRC_1)                      | found in both SR and RR
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
         self.header[0] = (
             (self.version << 6) | (self.padding << 5) | (self.report_count & 0x1F)
         )
 
+        # this is either 200 or 201 for RTCP SR or RR
         self.header[1] = self.payload_type & 0xFF
-        self.header[2] = 0
-        self.header[3] = 0
-        # length is in 32 bit words
+        self.header[2] = (length >> 8) & 0xFF
+        self.header[3] = length & 0xFF
+
+        # SSRC of sender (SSRC_1)
+        self.header[4:8] = ssrc.to_bytes(4, byteorder="big")
+
+    def _encode_report_block(
+        self,
+        fraction_lost: int = 0,
+        total_lost: int = 0,
+        extended_highest_seq_num: int = 0,
+        interarrival_jitter: int = 0,
+        last_sr: int = 0,
+        dlsr: int = 0,
+    ) -> bytes:
+        #  0                   1                   2                   3
+        #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        # +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        # |                 SSRC_1 (SSRC of first source)                 |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # | fraction lost |       cumulative number of packets lost       |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |           extended highest sequence number received           |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |                      interarrival jitter                      |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |                         last SR (LSR)                         |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |                   delay since last SR (DLSR)                  |
+        # +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        report = bytearray(24)
+
+        self.ssrc = int(self.ssrc)
+        self.fraction_lost = int(fraction_lost)
+        self.cumulative_packets_lost = int(total_lost)
+        self.extended_highest_seq_num = int(extended_highest_seq_num)
+        self.interarrival_jitter = int(interarrival_jitter)
+        self.last_sr = last_sr
+        self.dlsr = dlsr
+
+        # SSRC_1
+        report[0:4] = int(self.ssrc).to_bytes(4, byteorder="big")
+        # fraction lost
+        report[4] = fraction_lost & 0xFF
+        # cumulative number of packets lost
+        report[5:8] = total_lost.to_bytes(2, byteorder="big")
+        # extended highest sequence number received
+        report[8:12] = extended_highest_seq_num.to_bytes(2, byteorder="big")
+        # interarrival jitter
+        report[12:16] = interarrival_jitter.to_bytes(4, byteorder="big")
+        # last SR (LSR)
+        report[16:20] = last_sr.to_bytes(4, byteorder="big")
+        # delay since last SR (DLSR)
+        report[20:24] = dlsr.to_bytes(4, byteorder="big")
+
+        return bytes(report)
+
+    def _decode_report_block(self, payload: bytes) -> None:
+        """Decode the RTCP report block."""
+        print(payload)
+
+        # decode SSRC_1
+        self.ssrc = int.from_bytes(payload[0:4], byteorder="big")
+        # fraction lost
+        self.fraction_lost = payload[4] & 0xFF
+        # cumulative number of packets lost
+        self.cumulative_packets_lost = int.from_bytes(payload[5:8], byteorder="big")
+        # extended highest sequence number received
+        self.extended_highest_seq_num = int.from_bytes(payload[8:12], byteorder="big")
+        # interarrival jitter
+        self.interarrival_jitter = int.from_bytes(payload[12:16], byteorder="big")
+        # last SR (LSR)
+        self.last_sr = int.from_bytes(payload[16:20], byteorder="big")
+        # delay since last SR (DLSR)
+        self.dlsr = int.from_bytes(payload[20:24], byteorder="big")
+
+    def encode_sr(
+        self, last_packet_time: int, packet_count: int, octet_count: int
+    ) -> None:
+        """Encode the RTCP Sender Report packet."""
+
+        # After common SR/RR headers
+        #  0                   1                   2                   3
+        #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |              NTP timestamp, most significant word             |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |             NTP timestamp, least significant word             |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |                         RTP timestamp                         |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |                     sender's packet count                     |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |                      sender's octet count                     |
+        # +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+
+        self.payload = bytearray(20)
+
+        # Encode NTP timestamp in payload
+        self.payload[0:4] = ntp_timestamp().to_bytes(4, byteorder="big")
+        self.payload[4:8] = int(0).to_bytes(4, byteorder="big")  # RTP timestamp
+
+        self.payload[8:12] = last_packet_time.to_bytes(4, byteorder="big")
+        self.payload[12:16] = packet_count.to_bytes(4, byteorder="big")
+        self.payload[16:20] = octet_count.to_bytes(4, byteorder="big")
+
+    def encode_rr(
+        self,
+        fraction_lost: int = 0,
+        total_lost: int = 0,
+        extended_highest_seq_num: int = 0,
+        interarrival_jitter: int = 0,
+        last_sr: int = 0,
+        dlsr: int = 0,
+    ):
+        """Encode the RTCP packet."""
+
+        self.payload_type = 201  # RTCP RR
+        self.payload = self._encode_report_block(
+            fraction_lost,
+            total_lost,
+            extended_highest_seq_num,
+            interarrival_jitter,
+            last_sr,
+            dlsr,
+        )
+
+    def _decode_header(self, header_payload: bytes) -> None:
+        self.version = header_payload[0] >> 6
+        self.padding = (header_payload[0] >> 5) & 1
+        self.extension = (header_payload[0] >> 4) & 1
+        self.report_count = header_payload[0] & 0x1F
+        self.payload_type = header_payload[1] & 0xFF
+        self.length = (header_payload[2] << 8) | header_payload[3]
+        self.ssrc = int.from_bytes(header_payload[4:8], byteorder="big")
+
+    def decode_sender_info(self, payload: bytes) -> None:
+        """Decode the RTCP Sender Report packet."""
+        # decode NTP timestamp in payload
+        self.ntp_timestamp = int.from_bytes(payload[0:4], byteorder="big")
+        self.rtp_timestamp = int.from_bytes(payload[8:12], byteorder="big")
+        self.sender_packet_count = int.from_bytes(payload[12:16], byteorder="big")
+        self.sender_octet_count = int.from_bytes(payload[16:20], byteorder="big")
+
+    def decode(self, byte_stream: bytes) -> None:
+        """Decode the RTCP packet."""
+        self.header = bytearray(byte_stream[: self.HEADER_SIZE])
+        self.payload = byte_stream[self.HEADER_SIZE :]
+
+        self._decode_header(self.header)
+
+        if self.payload_type == 200:
+            self.decode_sender_info(self.payload)
+        elif self.payload_type == 201:
+            self._decode_report_block(self.payload)
+
+    def getpacket(self):
+        """Return RTCP packet."""
+        return self.header + self.payload
+
+
+if __name__ == "__main__":
+    rtp = RTPPacket()
+    rtp.encode(2, 0, 0, 1, 0, 0, 10, 0, b"hello world")
+
+    rtcp_test = RTCPPacket(
+        payload_type=201, report_count=0, length=0, ssrc=0, version=2
+    )
+    rtcp_test.encode_rr(
+        fraction_lost=0,
+        total_lost=0,
+        extended_highest_seq_num=0,
+        interarrival_jitter=0,
+        last_sr=0,
+        dlsr=0,
+    )
+
+    print(rtcp_test.getpacket())
+    rtcp_test_decode = RTCPPacket(payload_type=201)
+    rtcp_test_decode.decode(rtcp_test.getpacket())
+
+    # print(rtcp_test.getpacket())
+
+"""
+if __name__ == "__main__":
+    # Test SIP packet encoding and decoding. 
+    sip_inv = SIPPacket()
+    sip_inv.encode(
+        is_response=False,
+        method="INVITE",
+        res_code=None,
+        src_ip="0.0.0.0",
+        dest_ip="1.1.1.1",
+        rtp_port=1235,
+        call_id="1234",
+        cseq=1,
+        branch="1234",
+        codec_type="LPCM",
+        codec_pt=10,
+        codec_rate=44100,
+        codec_channels=2,
+    )
+
+    # print packet
+    print(sip_inv.getpacket().decode())
+
+    # sip_ack = SIPPacket()
+    # sip_ack.encode(
+    #     is_response=True,
+    #     method="ACK",
+    #     res_code=200,
+    #     src_ip="1.1.1.1",
+    #     dest_ip="0.0.0.0",
+    #     rtp_port=1235,
+    #     call_id="1234",
+    #     cseq=1,
+    # )
+
+    sip_inv2 = SIPPacket()
+    sip_inv2.decode(sip_inv.getpacket())
+
+    print("=====================")
+
+    print(sip_inv2.getpacket().decode())
+
+    # decode_test = SIPPacket(packet=sip_trying.getpacket())
+
+    # print(decode_test.getmessage())
+"""

@@ -14,7 +14,7 @@ def generate_buffer_salt():
 
 
 class AudioStream:
-    FRAME_DURATION = 20  # milliseconds
+    FRAME_DURATION = 40  # milliseconds
 
     def __init__(self, filename: str, ac: int = 1, ar: int = 44100):
         self.filename = filename
@@ -121,8 +121,6 @@ class AudioPlayer:
                     rate=self.rate,
                     output=True,
                 )
-
-                print(self.audio.get_format_from_width(2), self.channels, self.rate)
 
                 self.playing = True
                 # start thread to play audio
