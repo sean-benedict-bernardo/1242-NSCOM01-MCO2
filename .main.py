@@ -46,7 +46,8 @@ class Client:
         self.sip_server.daemon = True  # ties the thread to the main thread
 
         # rtp socket
-        self.rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rtp_listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rtp_send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtp_server = threading.Thread(target=self.listen_rtp)
         self.rtp_server.daemon = True  # ties the thread to the main thread
 
@@ -481,8 +482,8 @@ class Client:
     def listen_rtp(self, port: int):
         """Listen for RTP packets."""
 
-        self.rtp_socket.bind((self.ip, port))
-        self.rtp_socket.settimeout(1)
+        self.rtp_listen_socket.bind((self.ip, port))
+        self.rtp_listen_socket.settimeout(1)
 
         current_frame = 0
 
@@ -490,7 +491,7 @@ class Client:
 
         while self.keep_threads:
             try:
-                data, addr = self.rtp_socket.recvfrom(4096)
+                data, addr = self.rtp_listen_socket.recvfrom(4096)
 
                 packet = RTPPacket()
 
@@ -547,7 +548,7 @@ class Client:
             packet = RTPPacket()
             packet.encode(2, 0, 0, 1, frame_num, 0, 10, 0, frame)
 
-            self.rtp_socket.sendto(
+            self.rtp_send_socket.sendto(
                 packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
             )
             sleep_time = audio.FRAME_DURATION / 1000
