@@ -16,8 +16,7 @@ def generate_buffer_salt():
 class AudioStream:
     FRAME_DURATION = 20  # milliseconds
 
-
-    def __init__(self, filename: str):
+    def __init__(self, filename: str, ac: int = 1, ar: int = 44100):
         self.filename = filename
         self.BUFFERFILE = f"files/__buffer{generate_buffer_salt()}__.wav"
 
@@ -28,8 +27,8 @@ class AudioStream:
                 self.BUFFERFILE,
                 format="wav",
                 acodec="pcm_s16le",
-                ac=2,
-                ar="44100",
+                ac=ac,
+                ar=ar,
             )
             file_output.run(quiet=True, overwrite_output=True)
         except ffmpeg.Error:

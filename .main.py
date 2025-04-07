@@ -231,7 +231,7 @@ class Client:
         self.widgets["mic_on_btn"].grid(row=8, column=0)
 
         self.widgets["mic_off_btn"] = tk.Button(
-            self.master, text="Close Mic", font=standard_font, command=self.open_mic
+            self.master, text="Close Mic", font=standard_font, command=self.close_mic
         )
         self.widgets["mic_off_btn"].grid(row=8, column=1)
 
@@ -295,15 +295,22 @@ class Client:
         self.call["Branch"] = sip_packet.branch
 
         # extract codec information from the SIP packet
-        codec_type = sip_packet.body["a"]["codec_type"]
-        codec_rate = sip_packet.body["a"]["codec_rate"]
-        codec_channels = sip_packet.body["a"]["codec_channels"]
+        self.call["codec"] = {}
+
+        self.call["codec"]["type"] = sip_packet.body["a"]["codec_type"]
+        self.call["codec"]["rate"] = sip_packet.body["a"]["codec_rate"]
+        self.call["codec"]["channels"] = sip_packet.body["a"]["codec_channels"]
 
         self.active_call.set()
 
         self.rtp_server = threading.Thread(
             target=self.listen_rtp,
-            args=(self.call["rtp_port"], codec_type, codec_channels, codec_rate),
+            args=(
+                self.call["rtp_port"],
+                self.call["codec"]["type"],
+                self.call["codec"]["channels"],
+                self.call["codec"]["rate"],
+            ),
             daemon=True,
         )
 
@@ -386,6 +393,15 @@ class Client:
         mic_thread = threading.Thread(target=self.send_mic_audio, daemon=True)
         mic_thread.start()
 
+    def close_mic(self):
+        """Close the microphone."""
+        if not self.is_mic_on.is_set():
+            self.display_error("Microphone is already closed.")
+            return
+
+        self.is_mic_on.clear()
+        self.toggle_mic_button()
+
     """
     SIP Methods
     """
@@ -441,7 +457,7 @@ class Client:
             cseq=self.cseq,
             codec_type="LPCM",
             codec_rate=44100,
-            codec_channels=2,
+            codec_channels=1,
         )
 
         # log_message(addr, "SIP Sent", invite_msg.getpacket().decode())
@@ -541,7 +557,10 @@ class Client:
                     log_message(addr, "SIP Sent", response.getpacket().decode())
 
                 case "ACK":
-                    if self.current_state == self.CALLING or self.current_state == self.IDLE:
+                    if (
+                        self.current_state == self.CALLING
+                        or self.current_state == self.IDLE
+                    ):
                         self.display_message("Call Accepted. Starting RTP stream.")
                         self.accept_call(message)
                     elif self.current_state == self.IN_CALL:
@@ -564,13 +583,11 @@ class Client:
                         call_id=message.call_id,
                         branch=message.branch,
                         cseq=message.cseq,
-                        codec_type=codec_type,
-                        codec_rate=codec_rate,
-                        codec_channels=codec_channels,
                     )
 
                     self.end_call()
                     self.sip_socket.sendto(response.getpacket(), addr)
+                    self.cseq = 0
                     log_message(addr, "SIP Sent", response.getpacket().decode())
         else:
             match message.res_code:
@@ -656,6 +673,9 @@ class Client:
 
     def listen_rtp(self, port: int, encoding: str, channels: int, rate: int):
         """Listen for RTP packets."""
+        num_packets = 0
+        num_skipped = 0
+
         self.rtp_listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtp_listen_socket.bind((self.ip, port))
         self.rtp_listen_socket.settimeout(1)
@@ -704,12 +724,14 @@ class Client:
     def send_rtp(self, filename: str):
         """Send RTP packets to the recipient."""
 
-        if self.call["rtp_port"] == 0:
+        if self.call["rtp_port"] == 0 or self.is_mic_on.is_set():
             return
 
         audio = None
         try:
-            audio = AudioStream(filename)
+            audio = AudioStream(
+                filename, self.call["codec"]["rate"], self.call["codec"]["channels"]
+            )
         except Exception as e:
             self.display_error(f"Error opening audio file: {e}")
             return
@@ -752,7 +774,7 @@ class Client:
         mic_stream = pa.open(
             format=pyaudio.paInt16,
             channels=1,
-            rate=44100,
+            rate=self.call["codec"]["rate"],
             input=True,
             frames_per_buffer=512,
         )
@@ -774,13 +796,6 @@ class Client:
 
                 if not is_loud_enough(payload):
                     continue
-
-                # normalize the audio data to be compliant with payload type 10 (G.722)
-                audio_data = np.frombuffer(payload, dtype=np.int16)
-                audio_data = (audio_data / np.max(np.abs(audio_data)) * 32767).astype(
-                    np.int16
-                )
-                payload = audio_data.tobytes()
 
                 packet = RTPPacket()
                 packet.encode(2, 0, 0, 1, seqnum, 0, 10, 0, payload)
@@ -804,10 +819,10 @@ class Client:
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1:
         host_ip = sys.argv[1]
     else:
         host_ip = socket.gethostbyname(socket.gethostname())
-
 
     client = Client(host_ip)
