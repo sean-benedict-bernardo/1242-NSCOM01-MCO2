@@ -68,6 +68,14 @@ class AudioStream:
         if frame:
             self.frame_num += 1
         return frame, self.frame_num - 1
+    
+    def all_frames(self) -> list[bytes]:
+        """Get all frames."""
+        frames = []
+        while self.pointer < len(self.file_data):
+            frame, _ = self.next_frame()
+            frames.append(frame)
+        return frames
 
     def get_frame_num(self):
         """Get frame number."""

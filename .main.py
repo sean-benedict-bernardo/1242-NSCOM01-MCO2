@@ -60,6 +60,9 @@ class Client:
         self.stop_send = threading.Event()
         self.stop_send.set()
 
+        self.last_packet_time = time.time()
+        self.last_rtcp_time = time.time()
+
         self.active_call = False
         self.call = {}
         self.cseq = 1
@@ -526,6 +529,9 @@ class Client:
     def send_rtp(self, filename: str):
         """Send RTP packets to the recipient."""
 
+        if self.call["rtp_port"] == 0:
+            return
+
         audio = None
         try:
             audio = AudioStream(filename)
@@ -533,6 +539,40 @@ class Client:
             self.display_error(f"Error opening audio file: {e}")
             return
 
+        # Load all frames into memory
+        all_frames = audio.all_frames()
+        all_packets = []
+        if not all_frames:
+            self.display_error("No frames to send.")
+            return
+        else:
+            for frame, index in all_frames:
+                packet = RTPPacket()
+                packet.encode(2, 0, 0, 1, index, 0, 10, 0, frame)
+                all_packets.append(packet.getpacket())
+
+        # send the packets
+        while True:
+            if len(all_packets) == 0:
+                break
+            packet = all_packets.pop(0)
+
+            if not packet:
+                print("No more frames or paused")
+                break
+
+            self.rtp_send_socket.sendto(
+                packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
+            )
+
+            sleep_time = audio.FRAME_DURATION / 1000
+
+            # can we binary search the optimal rate for the audio? the answer is sorta,
+            # ideally the sleep time should be 100% but considering network latency
+            # this is the equilibrium between not hearing choppy audio and
+            # not flooding the client buffer with packets
+            time.sleep(sleep_time * 0.9745)
+        """
         while True:
             if self.call["rtp_port"] == 0:
                 return
@@ -558,6 +598,7 @@ class Client:
             # this is the equilibrium between not hearing choppy audio and
             # not flooding the client buffer with packets
             time.sleep(sleep_time * 0.9745)
+        """
 
     """
     RTCP Methods
