@@ -305,12 +305,7 @@ class Client:
 
         self.rtp_server = threading.Thread(
             target=self.listen_rtp,
-            args=(
-                self.call["rtp_port"],
-                self.call["codec"]["type"],
-                self.call["codec"]["channels"],
-                self.call["codec"]["rate"],
-            ),
+            args=(self.call["rtp_port"], self.call["codec"]["type"], self.call["codec"]["channels"], self.call["codec"]["rate"]),
             daemon=True,
         )
 
@@ -557,10 +552,7 @@ class Client:
                     log_message(addr, "SIP Sent", response.getpacket().decode())
 
                 case "ACK":
-                    if (
-                        self.current_state == self.CALLING
-                        or self.current_state == self.IDLE
-                    ):
+                    if self.current_state == self.CALLING or self.current_state == self.IDLE:
                         self.display_message("Call Accepted. Starting RTP stream.")
                         self.accept_call(message)
                     elif self.current_state == self.IN_CALL:
@@ -729,9 +721,7 @@ class Client:
 
         audio = None
         try:
-            audio = AudioStream(
-                filename, self.call["codec"]["rate"], self.call["codec"]["channels"]
-            )
+            audio = AudioStream(filename, self.call["codec"]["rate"], self.call["codec"]["channels"])
         except Exception as e:
             self.display_error(f"Error opening audio file: {e}")
             return
@@ -750,7 +740,7 @@ class Client:
 
             # encode the frame into an RTP packet
             packet = RTPPacket()
-            packet.encode(2, 0, 0, 1, frame_num, 0, 10, 0, frame)
+            packet.encode(2, 0, 0, 1, frame_num, 0, 11, 0, frame)
 
             self.rtp_send_socket.sendto(
                 packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
@@ -797,6 +787,13 @@ class Client:
                 if not is_loud_enough(payload):
                     continue
 
+                # convert to 16-bit PCM
+                audio_data = np.frombuffer(payload, dtype=np.int16)
+                audio_data = audio_data.astype(np.int16)
+                audio_data = audio_data * 32767 / np.max(np.abs(audio_data))
+                audio_data = audio_data.astype(np.int16)
+                payload = audio_data.tobytes()
+
                 packet = RTPPacket()
                 packet.encode(2, 0, 0, 1, seqnum, 0, 10, 0, payload)
                 seqnum += 1
@@ -819,10 +816,10 @@ class Client:
 
 if __name__ == "__main__":
     import sys
-
     if len(sys.argv) > 1:
         host_ip = sys.argv[1]
     else:
         host_ip = socket.gethostbyname(socket.gethostname())
+
 
     client = Client(host_ip)
