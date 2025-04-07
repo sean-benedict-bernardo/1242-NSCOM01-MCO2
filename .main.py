@@ -68,7 +68,7 @@ class Client:
 
         self.update_value = threading.Lock()
 
-        self.last_packet_time = time.time()
+        self.last_packet_time = 0
         self.last_rtcp_time = time.time()
 
         # rtcp stats
@@ -324,6 +324,7 @@ class Client:
         """Accept an incoming call."""
         self.current_state = self.IN_CALL
         self.dest_ip = sip_packet.src_ip
+        self.dest_sip_port = self.SIP_PORT
         self.call["rtp_port"] = sip_packet.body["m"]["port"]
         self.call["rtcp_port"] = sip_packet.body["m"]["port"] + 1
         self.call["Call-ID"] = sip_packet.call_id
@@ -772,7 +773,7 @@ class Client:
 
                 self.current_frame = packet.seqnum()
 
-                self.last_packet_time = time.time()
+                self.last_packet_time = int(time.time())
                 # print("listen_rtp: ", self.last_packet_time, "PLAYING")
 
                 audio_player.play_audio_packet(payload)

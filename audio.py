@@ -52,7 +52,7 @@ class AudioStream:
         """Destructor to remove buffer file."""
         try:
             import os
-            # os.remove(self.BUFFERFILE)
+            os.remove(self.BUFFERFILE)
         except Exception:
             pass
 

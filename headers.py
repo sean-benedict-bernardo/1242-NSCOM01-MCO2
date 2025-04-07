@@ -483,7 +483,7 @@ class RTCPPacket:
         self.payload[4:8] = int(0).to_bytes(4, byteorder="big")
 
         # RTP timestamp
-        self.payload[8:12] = last_packet_time.to_bytes(4, byteorder="big")
+        self.payload[8:12] = int(last_packet_time).to_bytes(4, byteorder="big")
         self.payload[12:16] = packet_count.to_bytes(4, byteorder="big")
         self.payload[16:20] = octet_count.to_bytes(4, byteorder="big")
 
