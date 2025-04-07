@@ -11,6 +11,8 @@ from headers import SIPPacket, RTPPacket, RTCPPacket
 from audio import AudioStream, AudioPlayer
 import time
 
+import random
+
 APPNAME = "SKOIP"
 SIP_PACKET_SIZE = 1024
 RTP_PACKET_SIZE = 8192
@@ -794,6 +796,9 @@ class Client:
 
         if self.call["rtp_port"] == 0 or self.is_mic_on.is_set():
             return
+        
+        # 32-bit random number for SSRC
+        selected_ssrc = random.randint(1000, 9999)
 
         audio = None
         try:
@@ -820,7 +825,7 @@ class Client:
 
             # encode the frame into an RTP packet
             packet = RTPPacket()
-            packet.encode(2, 0, 0, 1, frame_num, 0, 11, 0, frame)
+            packet.encode(2, 0, 0, 1, frame_num, 0, 11, selected_ssrc, frame)
 
             self.rtp_send_socket.sendto(
                 packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
@@ -844,6 +849,8 @@ class Client:
             return
 
         print("Starting Mic")
+        
+        selected_ssrc = random.randint(1000, 9999)
 
         buffer_size = 1024
 
@@ -952,7 +959,7 @@ class Client:
                             0,
                             1,
                             seqnum,
-                            self.call.get("ssrc", random.randint(1000, 9999)),
+                            self.call.get("ssrc", selected_ssrc),
                             11,
                             timestamp,
                             enhanced_data,
