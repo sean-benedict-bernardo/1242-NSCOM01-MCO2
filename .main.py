@@ -738,8 +738,9 @@ class Client:
         while self.active_call.is_set():
             # check if more than 10 seconds since the last rtcp packet
             if time.time() - self.rtcp_stats["last_SR"] > 10:
-                self.send_rtcp_rr()
-                self.send_rtcp_sr()
+                with self.update_value:
+                    self.send_rtcp_rr()
+                    self.send_rtcp_sr()
 
             try:
                 data, addr = self.rtp_listen_socket.recvfrom(RTP_PACKET_SIZE)
@@ -762,11 +763,12 @@ class Client:
                     continue
 
                 # detect packet loss
-                if packet.seqnum() > current_frame + 1:
-                    self.rtcp_stats["packets_lost"] += 1
-                    self.rtcp_stats["fraction_lost"] += 1
-                self.rtcp_stats["last_seqnum"] = packet.seqnum()
-                self.rtcp_stats["packets_received"] += 1
+                with self.update_value:
+                    if packet.seqnum() > current_frame + 1:
+                        self.rtcp_stats["packets_lost"] += 1
+                        self.rtcp_stats["fraction_lost"] += 1
+                    self.rtcp_stats["last_seqnum"] = packet.seqnum()
+                    self.rtcp_stats["packets_received"] += 1
 
                 current_frame = packet.seqnum()
 
@@ -822,8 +824,9 @@ class Client:
             self.rtp_send_socket.sendto(
                 packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
             )
-            self.rtcp_stats["packets_sent"] += 1
-            self.rtcp_stats["octets_sent"] += len(frame)
+            with self.update_value:
+                self.rtcp_stats["packets_sent"] += 1
+                self.rtcp_stats["octets_sent"] += len(frame)
             sleep_time = audio.FRAME_DURATION / 1000
 
             # can we binary search the optimal rate for the audio? the answer is sorta,
@@ -926,7 +929,6 @@ class Client:
 
             # VAD has memory of recent audio to reduce choppiness
             silence_duration = 0
-            voice_buffer = []
 
             print("Microphone ready and sending")
 
@@ -960,6 +962,10 @@ class Client:
                         )
 
                         silence_duration = 0
+
+                        with self.update_value:
+                            self.rtcp_stats["packets_sent"] += 1
+                            self.rtcp_stats["octets_sent"] += len(enhanced_data)
 
                     else:
                         # Count silence frames
