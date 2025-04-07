@@ -63,6 +63,10 @@ class SIPPacket:
         call_id: str = "",
         branch: str = "",
         cseq: int = 0,
+        a_codec: str = "LPCM",
+        a_payload_type: int = 10,
+        a_rate: int = 0,
+        a_channels: int = 0,
     ) -> bytes:
 
         self.is_response = is_response
@@ -97,7 +101,8 @@ class SIPPacket:
                 "s": "SKOIP Call",
                 "c": "IN IP4",
                 "t": "0 0",
-                "m": f"audio {rtp_port} RTP/AVP 0",
+                "m": f"audio {rtp_port} RTP/AVP {a_payload_type}",
+                "a": f"rtpmap:0 {a_codec}/{a_rate}/{a_channels}",
             }
             # add length of
             self.fields["Content-Length"] = str(
@@ -168,6 +173,16 @@ class SIPPacket:
                         "proto": val[2],
                         "fmt": val[3],
                     }
+                elif key == "a":
+                    if "rtpmap" in val:
+                        codec_info = val.split(" ")[1].split("/")
+                        self.body[key] = {
+                            "codec_type": codec_info[0],
+                            "codec_rate": int(codec_info[1]),
+                            "codec_channels": int(codec_info[2]),
+                        }
+                    else:
+                        self.body[key] = val.split(":")[1]
                 else:
                     self.body[key] = val
 
@@ -191,7 +206,7 @@ class SIPPacket:
                     val = f"{val['media']} {val['port']} {val['proto']} {' '.join(val['fmt'])}"
                 elif key == "Via" and isinstance(val, dict):
                     val = f"{val['protocol']};branch={val['branch']}"
-                
+
                 message += f"{key}={val}\r\n"
 
         return message.encode()
@@ -221,6 +236,7 @@ if __name__ == "__main__":
         rtp_port=1235,
         call_id="1234",
         cseq=1,
+
     )
 
     sip_trying = SIPPacket()
@@ -229,7 +245,7 @@ if __name__ == "__main__":
     # print(vars(sip_trying))
 
     # accessing the body of the SIP packet
-    
+
     # print headers
 
     for key, val in sip_trying.fields.items():
@@ -337,19 +353,20 @@ class RTPPacket:
         """Return RTP packet."""
         return self.header + self.payload
 
+
 RTCP_PAYLOAD_TYPES = {
     200: "RTCP Sender Report",
     201: "RTCP Reader Report",
 }
+
 
 class RTCPPacket:
     HEADER_SIZE = 4
 
     header = bytearray(HEADER_SIZE)
 
-    def encode(self, RC, PT, payload):
+    def encode(self, PT, reports: list):
         """Encode the RTCP packet."""
-
 
         #   0                   1                   2                   3
         #   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -357,7 +374,18 @@ class RTCPPacket:
         # |V=2|P|    RC   |   PT=200      |             length            |
         # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-        self.header[0] = (2 << 6) & 0xFF
+        self.version = 2
+        self.padding = 0
+        self.extension = 0
+        self.report_count = len(reports)
+        self.ssrc = 0
+        self.payload_type = PT
 
-        self.header = header
-        self.payload = payload
+        self.header[0] = (
+            (self.version << 6) | (self.padding << 5) | (self.report_count & 0x1F)
+        )
+
+        self.header[1] = self.payload_type & 0xFF
+        self.header[2] = 0
+        self.header[3] = 0
+        # length is in 32 bit words

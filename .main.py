@@ -4,17 +4,21 @@ import tkinter.messagebox as tkmb
 import socket, threading, random, os
 import headers
 
+import pyaudio
+import numpy as np
+
 from headers import SIPPacket, RTPPacket
 from audio import AudioStream, AudioPlayer
 import time
 
 APPNAME = "SKOIP"
 SIP_PACKET_SIZE = 1024
+RTP_PACKET_SIZE = 8192
 
 
 def log_message(client: tuple, protocol: str, message: str):
     print(f"===== {client[0]}:{client[1]} | {protocol} =====")
-    print(f"{message}")
+    print(f"{message}", end="\n\n")
 
 
 def make_dir():
@@ -56,10 +60,9 @@ class Client:
         self.rtcp_server = threading.Thread(target=self.listen_rtcp)
         self.rtcp_server.daemon = True  # ties the thread to the main thread
 
-        # threading locks
+        # thread synchronization
         self.active_call = threading.Event()
-        self.active_call.set()
-        
+        self.is_mic_on = threading.Event()
         self.is_playing = threading.Event()
 
         self.last_packet_time = time.time()
@@ -81,11 +84,11 @@ class Client:
         except Exception:
             self.keep_threads = False
             self.sip_server.join()
-            self.master.destroy
-        
+            self.master.destroy()
+
         # create the widgets
         self.make_widgets()
-        
+
         self.widgets["my_ip"].config(text=f"{self.ip}:{self.SIP_PORT}")
 
         self.master.mainloop()
@@ -115,6 +118,17 @@ class Client:
         else:
             self.widgets["conn_btn"]["state"] = "disabled"
             self.widgets["term_btn"]["state"] = "normal"
+
+    def toggle_mic_button(self):
+        """toggle the mic button"""
+        if self.is_mic_on.is_set():
+            self.widgets["mic_on_btn"]["state"] = "disabled"
+            self.widgets["mic_off_btn"]["state"] = "normal"
+            self.widgets["mic_status"].config(text="Mic Status: Open")
+        else:
+            self.widgets["mic_on_btn"]["state"] = "normal"
+            self.widgets["mic_off_btn"]["state"] = "disabled"
+            self.widgets["mic_status"].config(text="Mic Status: Closed")
 
     def toggle_button(self, button_name: str):
         """disable a button"""
@@ -181,7 +195,10 @@ class Client:
         self.widgets["conn_btn"].grid(row=4, column=4)
 
         self.widgets["term_btn"] = tk.Button(
-            self.master, text="End Call", font=standard_font, command=lambda: self.end_call(True)
+            self.master,
+            text="End Call",
+            font=standard_font,
+            command=lambda: self.end_call(True),
         )
         self.widgets["term_btn"].grid(row=4, column=5)
 
@@ -208,16 +225,21 @@ class Client:
         self.widgets["separator_3"].grid(row=7, column=0, columnspan=5, sticky="ew")
 
         # TODO: set button to open mic
-        self.widgets["mic_btn"] = tk.Button(
-            self.master, text="Open Mic", font=standard_font, command=self.placeholder
+        self.widgets["mic_on_btn"] = tk.Button(
+            self.master, text="Open Mic", font=standard_font, command=self.open_mic
         )
-        self.widgets["mic_btn"].grid(row=8, column=0)
+        self.widgets["mic_on_btn"].grid(row=8, column=0)
+
+        self.widgets["mic_off_btn"] = tk.Button(
+            self.master, text="Close Mic", font=standard_font, command=self.open_mic
+        )
+        self.widgets["mic_off_btn"].grid(row=8, column=1)
 
         self.widgets["mic_status"] = tk.Label(
             self.master, text="Mic Status: Closed", font=standard_font
         )
-        self.widgets["mic_status"].grid(row=8, column=1)
-        
+        self.widgets["mic_status"].grid(row=8, column=2, columnspan=2)
+
         self.toggle_call_button()
 
     """
@@ -272,24 +294,32 @@ class Client:
         self.call["Call-ID"] = sip_packet.call_id
         self.call["Branch"] = sip_packet.branch
 
-        print(self.call)
+        # extract codec information from the SIP packet
+        codec_type = sip_packet.body["a"]["codec_type"]
+        codec_rate = sip_packet.body["a"]["codec_rate"]
+        codec_channels = sip_packet.body["a"]["codec_channels"]
+
+        self.active_call.set()
 
         self.rtp_server = threading.Thread(
-            target=self.listen_rtp, args=(self.call["rtp_port"],), daemon=True
+            target=self.listen_rtp,
+            args=(self.call["rtp_port"], codec_type, codec_channels, codec_rate),
+            daemon=True,
         )
 
         self.toggle_call_button()
 
         self.rtp_server.start()
 
-    def end_call(self, initiate = False):
+    def end_call(self, initiate=False):
         print("Ending call...")
         if self.current_state == self.IDLE:
             self.display_error("No active call.")
             return
-        
+
         if initiate:
             bye = SIPPacket()
+            self.cseq += 1
             bye.encode(
                 is_response=False,
                 method="BYE",
@@ -301,8 +331,12 @@ class Client:
             )
 
             self.sip_socket.sendto(bye.getpacket(), (self.dest_ip, self.dest_sip_port))
-            log_message((self.dest_ip, self.dest_sip_port), "SIP Sent", bye.getpacket().decode())
+            log_message(
+                (self.dest_ip, self.dest_sip_port), "SIP Sent", bye.getpacket().decode()
+            )
 
+        if self.is_playing.is_set():
+            self.is_playing.clear()
 
         # clear event, enabling the servers to close
         self.active_call.clear()
@@ -310,6 +344,10 @@ class Client:
         self.current_state = self.IDLE
         self.dest_ip = ""
         self.call = {}
+
+        self.rtp_listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rtp_send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rtp_server = threading.Thread(target=self.listen_rtp)
 
         self.toggle_call_button()
 
@@ -331,7 +369,22 @@ class Client:
             self.is_playing.clear()
             send_rtp_thread = threading.Thread(target=self.send_rtp, args=(file_path,))
             send_rtp_thread.start()
-            send_rtp_thread.join()
+
+    def open_mic(self):
+        """Open the microphone."""
+        if self.current_state != self.IN_CALL:
+            self.display_error("No active call.")
+            return
+
+        if self.is_mic_on.is_set():
+            self.display_error("Microphone is already open.")
+            return
+
+        self.is_mic_on.set()
+        self.toggle_mic_button()
+
+        mic_thread = threading.Thread(target=self.send_mic_audio, daemon=True)
+        mic_thread.start()
 
     """
     SIP Methods
@@ -386,6 +439,9 @@ class Client:
             call_id=self.call["Call-ID"],
             branch=self.call["Branch"],
             cseq=self.cseq,
+            codec_type="LPCM",
+            codec_rate=44100,
+            codec_channels=2,
         )
 
         # log_message(addr, "SIP Sent", invite_msg.getpacket().decode())
@@ -402,7 +458,7 @@ class Client:
 
         log_message(addr, "SIP Received", message.getpacket().decode())
 
-        if self.current_state == self.IN_CALL:
+        if self.current_state == self.IN_CALL and message.method != "BYE":
             # send 486: Busy Here
             response = SIPPacket()
             response.encode(
@@ -418,6 +474,15 @@ class Client:
             self.sip_socket.sendto(response.getpacket(), addr)
             log_message(addr, "SIP Sent", response.getpacket().decode())
             return
+
+        rtp_port, rtcp_port = 0, 0
+        codec_type, codec_rate, codec_channels = "", 0, 0
+
+        if message.body and message.body["m"] and message.body["a"]:
+            rtp_port = message.body["m"]["port"]
+            codec_type = message.body["a"]["codec_type"]
+            codec_rate = message.body["a"]["codec_rate"]
+            codec_channels = message.body["a"]["codec_channels"]
 
         if not message.is_response:
             match message.method:
@@ -443,21 +508,39 @@ class Client:
                     )
 
                     response = SIPPacket()
-                    response.encode(
-                        is_response=True,
-                        res_code=200 if confirm_call else 603,
-                        src_ip=self.ip,
-                        dest_ip=addr[0],
-                        rtp_port=message.body["m"]["port"],
-                        call_id=message.call_id,
-                        branch=message.branch,
-                        cseq=message.cseq,
-                    )
+                    if confirm_call:
+                        response.encode(
+                            is_response=True,
+                            res_code=200,
+                            src_ip=self.ip,
+                            dest_ip=addr[0],
+                            rtp_port=rtp_port,
+                            call_id=message.call_id,
+                            branch=message.branch,
+                            cseq=message.cseq,
+                            codec_type=codec_type,
+                            codec_rate=codec_rate,
+                            codec_channels=codec_channels,
+                        )
+                    else:
+                        response.encode(
+                            is_response=True,
+                            res_code=200 if confirm_call else 603,
+                            src_ip=self.ip,
+                            dest_ip=addr[0],
+                            rtp_port=rtp_port,
+                            call_id=message.call_id,
+                            branch=message.branch,
+                        )
 
                     self.sip_socket.sendto(response.getpacket(), addr)
                     log_message(addr, "SIP Sent", response.getpacket().decode())
 
-                    if confirm_call:
+                case "ACK":
+                    if self.current_state != self.CALLING:
+                        self.display_error("No active call.")
+                    else:
+                        self.display_message("Call Accepted. Starting RTP stream.")
                         self.accept_call(message)
 
                 case "BYE":
@@ -477,8 +560,12 @@ class Client:
                         call_id=message.call_id,
                         branch=message.branch,
                         cseq=message.cseq,
+                        codec_type=codec_type,
+                        codec_rate=codec_rate,
+                        codec_channels=codec_channels,
                     )
 
+                    self.end_call()
                     self.sip_socket.sendto(response.getpacket(), addr)
                     log_message(addr, "SIP Sent", response.getpacket().decode())
         else:
@@ -488,8 +575,29 @@ class Client:
                 case 180:
                     self.display_message("SIP message 180: Ringing")
                 case 200:
-                    if self.current_state == self.CALLING:    
+                    if self.current_state == self.CALLING:
                         self.display_message("Call Accepted. Starting RTP stream.")
+
+                        # send ACK
+                        ack = SIPPacket()
+                        ack.encode(
+                            is_response=False,
+                            method="ACK",
+                            src_ip=self.ip,
+                            dest_ip=addr[0],
+                            call_id=message.call_id,
+                            branch=message.branch,
+                            cseq=self.cseq,
+                            rtp_port=message.body["m"]["port"],
+                            codec_type=codec_type,
+                            codec_rate=codec_rate,
+                            codec_channels=codec_channels,
+                        )
+
+                        self.sip_socket.sendto(ack.getpacket(), addr)
+                        
+                        log_message(addr, "SIP Sent", ack.getpacket().decode())
+
                         self.accept_call(message)
                     elif self.current_state == self.IN_CALL:
                         self.display_message("Ending call.")
@@ -540,18 +648,20 @@ class Client:
     RTP Methods
     """
 
-    def listen_rtp(self, port: int):
+    def listen_rtp(self, port: int, encoding: str, channels: int, rate: int):
         """Listen for RTP packets."""
+        self.rtp_listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtp_listen_socket.bind((self.ip, port))
         self.rtp_listen_socket.settimeout(1)
         current_frame = 0
 
-        audio_player = AudioPlayer()
+        print(self.rtp_listen_socket)
+
+        audio_player = AudioPlayer(encoding, channels, rate)
 
         while self.active_call.is_set():
-
             try:
-                data, addr = self.rtp_listen_socket.recvfrom(4096)
+                data, addr = self.rtp_listen_socket.recvfrom(RTP_PACKET_SIZE)
 
                 packet = RTPPacket()
 
@@ -583,7 +693,7 @@ class Client:
                 break
             except Exception as e:
                 print(e)
-        pass
+        self.rtp_listen_socket.close()
 
     def send_rtp(self, filename: str):
         """Send RTP packets to the recipient."""
@@ -597,12 +707,10 @@ class Client:
         except Exception as e:
             self.display_error(f"Error opening audio file: {e}")
             return
-        
+
         self.is_playing.set()
 
-        while True:
-            print("send_rtp: ", time.time())
-            
+        while self.is_playing.is_set():
             if self.call["rtp_port"] == 0:
                 return
 
@@ -611,7 +719,6 @@ class Client:
                 print(f"Finished sending ${filename}.")
                 self.is_playing.clear()
                 break
-
 
             # encode the frame into an RTP packet
             packet = RTPPacket()
@@ -627,6 +734,59 @@ class Client:
             # this is the equilibrium between not hearing choppy audio and
             # not flooding the client buffer with packets
             time.sleep(sleep_time * 0.9745)
+
+    def send_mic_audio(self):
+        """Send audio from the microphone."""
+
+        if self.current_state != self.IN_CALL:
+            self.display_error("No active call.")
+            return
+
+        pa = pyaudio.PyAudio()
+        mic_stream = pa.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=44100,
+            input=True,
+            frames_per_buffer=512,
+        )
+
+        seqnum = 0
+
+        # check if the mic is loud enough to be sent
+
+        def is_loud_enough(data):
+            """Check if the audio data is loud enough."""
+            threshold = 30
+            audio_data = np.frombuffer(data, dtype=np.int16)
+            volume = np.linalg.norm(audio_data) / len(audio_data)
+            return volume > threshold
+
+        try:
+            while self.is_mic_on.is_set():
+                payload = mic_stream.read(512, exception_on_overflow=False)
+
+                if not is_loud_enough(payload):
+                    continue
+
+                # normalize the audio data to be compliant with payload type 10 (G.722)
+                audio_data = np.frombuffer(payload, dtype=np.int16)
+                audio_data = (audio_data / np.max(np.abs(audio_data)) * 32767).astype(
+                    np.int16
+                )
+                payload = audio_data.tobytes()
+
+                packet = RTPPacket()
+                packet.encode(2, 0, 0, 1, seqnum, 0, 10, 0, payload)
+                seqnum += 1
+
+                self.rtp_send_socket.sendto(
+                    packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
+                )
+        finally:
+            mic_stream.stop_stream()
+            mic_stream.close()
+            pa.terminate()
 
     """
     RTCP Methods
