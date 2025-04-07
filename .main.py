@@ -644,6 +644,7 @@ class Client:
 
                         # send ACK
                         ack = SIPPacket()
+                        self.cseq += 1
                         ack.encode(
                             is_response=False,
                             method="ACK",
