@@ -57,7 +57,8 @@ class Client:
         self.rtcp_server.daemon = True  # ties the thread to the main thread
 
         # threading locks
-        self.active_call = threading.Lock()
+        self.active_call = threading.Event()
+        self.active_call.set()
         
         self.is_playing = threading.Event()
 
@@ -303,6 +304,8 @@ class Client:
             log_message((self.dest_ip, self.dest_sip_port), "SIP Sent", bye.getpacket().decode())
 
 
+        # clear event, enabling the servers to close
+        self.active_call.clear()
 
         self.current_state = self.IDLE
         self.dest_ip = ""
@@ -545,9 +548,7 @@ class Client:
 
         audio_player = AudioPlayer()
 
-        while self.keep_threads:
-            if self.is_playing.is_set():
-                continue
+        while self.active_call.is_set():
 
             try:
                 data, addr = self.rtp_listen_socket.recvfrom(4096)
