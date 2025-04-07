@@ -49,7 +49,7 @@ class TestBench:
 
                 if self.num_timeout != 0:
                     self.num_timeout = 0
-                buff_size = self.audio_player.play_audio_packet(payload)
+                self.audio_player.play_audio_packet(payload)
             except socket.timeout:
                 # close audio player to save resources
                 if self.audio_player.playing:
@@ -57,7 +57,7 @@ class TestBench:
 
                 self.num_timeout += 1
 
-                if time.time() - self.last_packet_time > 5:
+                if time.time() - self.last_packet_time > 10:
                     break
 
     def close(self):
