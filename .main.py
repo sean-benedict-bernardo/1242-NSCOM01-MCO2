@@ -755,21 +755,21 @@ class Client:
 
                 if packet.seqnum() == 0:
                     # reset the current frame number
-                    current_frame = 0
+                    self.current_frame = 0
 
                 # ignore out of sequence frames
-                if packet.seqnum() < current_frame:
+                if packet.seqnum() < self.current_frame:
                     continue
 
                 # detect packet loss
                 
-                if packet.seqnum() > current_frame + 1:
+                if packet.seqnum() > self.current_frame + 1:
                     self.rtcp_stats["packets_lost"] += 1
                     self.rtcp_stats["fraction_lost"] += 1
                 self.rtcp_stats["last_seqnum"] = packet.seqnum()
                 self.rtcp_stats["packets_received"] += 1
 
-                current_frame = packet.seqnum()
+                self.current_frame = packet.seqnum()
 
                 self.last_packet_time = time.time()
                 # print("listen_rtp: ", self.last_packet_time, "PLAYING")
