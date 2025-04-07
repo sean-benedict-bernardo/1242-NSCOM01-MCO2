@@ -63,10 +63,10 @@ class SIPPacket:
         call_id: str = "",
         branch: str = "",
         cseq: int = 0,
-        a_codec: str = "LPCM",
-        a_payload_type: int = 10,
-        a_rate: int = 0,
-        a_channels: int = 0,
+        codec_type: str = "LPCM",
+        codec_pt: int = 10,
+        codec_rate: int = 0,
+        codec_channels: int = 0,
     ) -> bytes:
 
         self.is_response = is_response
@@ -101,8 +101,8 @@ class SIPPacket:
                 "s": "SKOIP Call",
                 "c": "IN IP4",
                 "t": "0 0",
-                "m": f"audio {rtp_port} RTP/AVP {a_payload_type}",
-                "a": f"rtpmap:0 {a_codec}/{a_rate}/{a_channels}",
+                "m": f"audio {rtp_port} RTP/AVP {codec_pt}",
+                "a": f"rtpmap:0 {codec_type}/{codec_rate}/{codec_channels}",
             }
             # add length of
             self.fields["Content-Length"] = str(
