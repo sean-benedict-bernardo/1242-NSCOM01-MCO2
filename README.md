@@ -113,7 +113,7 @@ o=- 0 0 IN IP4 192.168.5.178
 s=SKOIP Call
 c=IN IP4
 t=0 0
-m=audio 51125 RTP/AVP 11
+m=audio 51124 RTP/AVP 11
 a=rtpmap:11 LPCM/44100/1
 
 
@@ -147,7 +147,7 @@ o=- 0 0 IN IP4 192.168.5.143
 s=SKOIP Call
 c=IN IP4
 t=0 0
-m=audio 51125 RTP/AVP 11
+m=audio 51124 RTP/AVP 11
 a=rtpmap:11 LPCM/44100/1
 
 
@@ -169,7 +169,7 @@ o=- 0 0 IN IP4 192.168.5.178
 s=SKOIP Call
 c=IN IP4
 t=0 0
-m=audio 51125 RTP/AVP 11
+m=audio 51124 RTP/AVP 11
 a=rtpmap:11 LPCM/44100/1
 ```
 
@@ -193,7 +193,7 @@ o=- 0 0 IN IP4 192.168.5.178
 s=SKOIP Call
 c=IN IP4
 t=0 0
-m=audio 51125 RTP/AVP 11
+m=audio 51124 RTP/AVP 11
 a=rtpmap:11 LPCM/44100/1
 
 
@@ -227,7 +227,7 @@ o=- 0 0 IN IP4 192.168.5.143
 s=SKOIP Call
 c=IN IP4
 t=0 0
-m=audio 51125 RTP/AVP 11
+m=audio 51124 RTP/AVP 11
 a=rtpmap:11 LPCM/44100/1
 
 
@@ -249,7 +249,7 @@ o=- 0 0 IN IP4 192.168.5.178
 s=SKOIP Call
 c=IN IP4
 t=0 0
-m=audio 51125 RTP/AVP 11
+m=audio 51124 RTP/AVP 11
 a=rtpmap:11 LPCM/44100/1
 ```
 
@@ -321,7 +321,7 @@ Content-Length: 203
 ```
 
 3. RTCP Sender Report (SR)
-Note: Client A is the sender thus no terminal output is shown here
+Note: Client A is the sender thus no terminal output is shown for Client A. The sender report is sent from Client B to Client A.
 
 Client B (callee)
 ```
