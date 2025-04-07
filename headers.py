@@ -187,7 +187,7 @@ class SIPPacket:
                     }
                 elif key == "a":
                     if "rtpmap" in val:
-                        codec_pt = val.split(":")[0].split("/")[1]
+                        codec_pt = val.split(":")[1].split(" ")[0]
                         codec_info = val.split(" ")[1].split("/")
                         self.body[key] = {
                             "codec_pt": int(codec_pt),
@@ -239,36 +239,35 @@ if __name__ == "__main__":
         rtp_port=1235,
         call_id="1234",
         cseq=1,
+        branch="1234",
+        codec_type="LPCM",
+        codec_pt=10,
+        codec_rate=44100,
+        codec_channels=2,
     )
 
-    sip_ack = SIPPacket()
-    sip_ack.encode(
-        is_response=True,
-        method="ACK",
-        res_code=200,
-        src_ip="1.1.1.1",
-        dest_ip="0.0.0.0",
-        rtp_port=1235,
-        call_id="1234",
-        cseq=1,
-    )
+    # print packet
+    print(sip_inv.getpacket().decode())
 
-    sip_trying = SIPPacket()
-    sip_trying.decode(sip_inv.getpacket())
+    # sip_ack = SIPPacket()
+    # sip_ack.encode(
+    #     is_response=True,
+    #     method="ACK",
+    #     res_code=200,
+    #     src_ip="1.1.1.1",
+    #     dest_ip="0.0.0.0",
+    #     rtp_port=1235,
+    #     call_id="1234",
+    #     cseq=1,
+    # )
 
-    # print(vars(sip_trying))
+    sip_inv2 = SIPPacket()
+    sip_inv2.decode(sip_inv.getpacket())
 
-    # accessing the body of the SIP packet
+    print("=====================")
 
-    # print headers
+    print(sip_inv2.getpacket().decode())
 
-    for key, val in sip_trying.fields.items():
-        print(f"{key} := {val}")
-
-    # print body
-
-    for key, val in sip_trying.body.items():
-        print(f"{key} := {val}")
 
     # decode_test = SIPPacket(packet=sip_trying.getpacket())
 
