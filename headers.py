@@ -539,6 +539,10 @@ class RTCPPacket:
 
     def getpacket(self):
         """Return RTCP packet."""
+        # update header length
+        self.header[2] = ((len(self.payload) + self.HEADER_SIZE) // 4 - 1) >> 8
+        self.header[3] = ((len(self.payload) + self.HEADER_SIZE) // 4 - 1) & 0xFF
+
         return self.header + self.payload
 
 
