@@ -475,7 +475,7 @@ class Client:
             log_message(addr, "SIP Sent", response.getpacket().decode())
             return
 
-        rtp_port, rtcp_port = 0, 0
+        rtp_port = 0
         codec_type, codec_rate, codec_channels = "", 0, 0
 
         if message.body and message.body["m"] and message.body["a"]:
@@ -595,7 +595,7 @@ class Client:
                         )
 
                         self.sip_socket.sendto(ack.getpacket(), addr)
-                        
+
                         log_message(addr, "SIP Sent", ack.getpacket().decode())
 
                         self.accept_call(message)

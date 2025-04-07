@@ -101,8 +101,20 @@ class SIPPacket:
                 "s": "SKOIP Call",
                 "c": "IN IP4",
                 "t": "0 0",
-                "m": f"audio {rtp_port} RTP/AVP {codec_pt}",
-                "a": f"rtpmap:0 {codec_type}/{codec_rate}/{codec_channels}",
+                # "m": f"audio {rtp_port} RTP/AVP {codec_pt}",
+                "m": {
+                    "media": "audio",
+                    "port": rtp_port,
+                    "proto": "RTP/AVP",
+                    "fmt": [codec_pt],
+                },
+                # f"rtpmap:0 {codec_type}/{codec_rate}/{codec_channels}"
+                "a": {
+                    "codec_pt": codec_pt,
+                    "codec_type": codec_type,
+                    "codec_rate": int(codec_rate),
+                    "codec_channels": int(codec_channels),
+                },
             }
             # add length of
             self.fields["Content-Length"] = str(
@@ -175,8 +187,10 @@ class SIPPacket:
                     }
                 elif key == "a":
                     if "rtpmap" in val:
+                        codec_pt = val.split(":")[0].split("/")[1]
                         codec_info = val.split(" ")[1].split("/")
                         self.body[key] = {
+                            "codec_pt": int(codec_pt),
                             "codec_type": codec_info[0],
                             "codec_rate": int(codec_info[1]),
                             "codec_channels": int(codec_info[2]),
@@ -204,8 +218,9 @@ class SIPPacket:
             for key, val in self.body.items():
                 if key == "m" and isinstance(val, dict):
                     val = f"{val['media']} {val['port']} {val['proto']} {' '.join(val['fmt'])}"
-                elif key == "Via" and isinstance(val, dict):
-                    val = f"{val['protocol']};branch={val['branch']}"
+                elif key == "a" and isinstance(val, dict):
+                    # "rtpmap": f"{codec_pt} {codec_type}/{codec_rate}/{codec_channels}",
+                    val = f"rtpmap:{val['codec_pt']} {val['codec_type']}/{val['codec_rate']}/{val['codec_channels']}"
 
                 message += f"{key}={val}\r\n"
 
@@ -236,7 +251,6 @@ if __name__ == "__main__":
         rtp_port=1235,
         call_id="1234",
         cseq=1,
-
     )
 
     sip_trying = SIPPacket()
