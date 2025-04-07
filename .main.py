@@ -541,11 +541,11 @@ class Client:
                     log_message(addr, "SIP Sent", response.getpacket().decode())
 
                 case "ACK":
-                    if self.current_state != self.CALLING:
-                        self.display_error("No active call.")
-                    else:
+                    if self.current_state == self.CALLING or self.current_state == self.IDLE:
                         self.display_message("Call Accepted. Starting RTP stream.")
                         self.accept_call(message)
+                    elif self.current_state == self.IN_CALL:
+                        self.display_error("Call already accepted.")
 
                 case "BYE":
                     if self.current_state != self.IN_CALL:
@@ -575,8 +575,10 @@ class Client:
         else:
             match message.res_code:
                 case 100:
+                    self.current_state = self.CALLING
                     self.display_message("SIP message 100: Trying")
                 case 180:
+                    self.current_state = self.CALLING
                     self.display_message("SIP message 180: Ringing")
                 case 200:
                     if self.current_state == self.CALLING:
