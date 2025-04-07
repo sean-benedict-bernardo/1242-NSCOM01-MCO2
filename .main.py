@@ -737,13 +737,14 @@ class Client:
 
         print(self.rtp_listen_socket)
 
+        selected_ssrc = random.randint(1000, 9999)
         audio_player = AudioPlayer(encoding, channels, rate)
 
         while self.active_call.is_set():
             # check if more than 10 seconds since the last rtcp packet
             if time.time() - self.rtcp_stats["last_SR"] > 10:
-                    self.send_rtcp_rr()
-                    self.send_rtcp_sr()
+                    self.send_rtcp_rr(selected_ssrc)
+                    self.send_rtcp_sr(selected_ssrc)
 
             try:
                 data, addr = self.rtp_listen_socket.recvfrom(RTP_PACKET_SIZE)
@@ -1012,11 +1013,11 @@ class Client:
     RTCP Methods
     """
 
-    def send_rtcp_sr(self):
+    def send_rtcp_sr(self, ssrc: int):
         """Send RTCP SR packets."""
         with self.update_value:
             rtcp = RTCPPacket(
-                payload_type=200, report_count=1, length=0, ssrc=12435, version=2
+                payload_type=200, report_count=1, length=0, ssrc=ssrc, version=2
             )
             rtcp.encode_sr(
                 self.last_rtcp_time,
@@ -1030,11 +1031,11 @@ class Client:
 
             self.rtcp_stats["last_SR"] = int(time.time())
 
-    def send_rtcp_rr(self):
+    def send_rtcp_rr(self, selected_ssrc):
         """Send RTCP RR packets."""
         with self.update_value:
             rtcp = RTCPPacket(
-                payload_type=201, report_count=1, length=0, ssrc=12435, version=2
+                payload_type=201, report_count=1, length=0, ssrc=selected_ssrc, version=2
             )
 
             # perform calculations for the RTCP stats
