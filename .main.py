@@ -7,7 +7,7 @@ import headers
 import pyaudio
 import numpy as np
 
-from headers import SIPPacket, RTPPacket
+from headers import SIPPacket, RTPPacket, RTCPPacket
 from audio import AudioStream, AudioPlayer
 import time
 
@@ -68,6 +68,35 @@ class Client:
         self.last_packet_time = time.time()
         self.last_rtcp_time = time.time()
 
+        # rtcp stats
+        self.rtcp_stats = {
+            # sender report content
+            "packets_sent": 0,
+            "octets_sent": 0,
+            "last_packet_time": 0,
+            "packets_received": 0,
+            # reader report content
+            "packets_lost": 0,
+            "fraction_lost": 0,
+            "last_seqnum": 0,
+            "interarrival_jitter": 0,
+            "last_SR": 0,
+        }
+
+        self.received_stats = {
+            # sender report content
+            "packets_sent": 0,
+            "octets_sent": 0,
+            "last_packet_time": 0,
+            "packets_received": 0,
+            # reader report content
+            "packets_lost": 0,
+            "fraction_lost": 0,
+            "last_seqnum": 0,
+            "interarrival_jitter": 0,
+            "last_SR": 0,
+        }
+
         self.call = {}
         self.cseq = 1
 
@@ -94,6 +123,9 @@ class Client:
         self.master.mainloop()
 
     def onclose(self):
+        if self.current_state == self.IN_CALL:
+            self.end_call()
+
         self.keep_threads = False
         print("Closing...")
         exit(0)
@@ -314,9 +346,16 @@ class Client:
             daemon=True,
         )
 
+        self.rtcp_server = threading.Thread(
+            target=self.listen_rtcp,
+            args=(self.call["rtcp_port"],),
+            daemon=True,
+        )
+
         self.toggle_call_button()
 
         self.rtp_server.start()
+        self.rtcp_server.start()
 
     def end_call(self, initiate=False):
         print("Ending call...")
@@ -673,8 +712,6 @@ class Client:
 
     def listen_rtp(self, port: int, encoding: str, channels: int, rate: int):
         """Listen for RTP packets."""
-        num_packets = 0
-        num_skipped = 0
 
         self.rtp_listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtp_listen_socket.bind((self.ip, port))
@@ -686,6 +723,11 @@ class Client:
         audio_player = AudioPlayer(encoding, channels, rate)
 
         while self.active_call.is_set():
+            # check if more than 5 seconds since the last rtcp packet
+            if time.time() - self.rtcp_stats["last_SR"] > 5:
+                self.send_rtcp_rr()
+                self.send_rtcp_sr()
+
             try:
                 data, addr = self.rtp_listen_socket.recvfrom(RTP_PACKET_SIZE)
 
@@ -702,8 +744,14 @@ class Client:
                 if packet.seqnum() < current_frame:
                     continue
 
-                # if not is_from_rtp_port(packet):
-                #     continue
+                # detect packet loss
+                if packet.seqnum() > current_frame + 1:
+                    self.rtcp_stats["packets_lost"] += 1
+                    self.rtcp_stats["fraction_lost"] += 1
+                self.rtcp_stats["last_seqnum"] = packet.seqnum()
+                self.rtcp_stats["packets_received"] += 1
+
+                current_frame = packet.seqnum()
 
                 self.last_packet_time = time.time()
                 print("listen_rtp: ", self.last_packet_time, "PLAYING")
@@ -746,17 +794,19 @@ class Client:
 
             frame, frame_num = audio.next_frame()
             if not frame:
-                print(f"Finished sending ${filename}.")
+                print(f"Finished sending {filename}.")
                 self.is_playing.clear()
                 break
 
             # encode the frame into an RTP packet
             packet = RTPPacket()
-            packet.encode(2, 0, 0, 1, frame_num, 0, 10, 0, frame)
+            packet.encode(2, 0, 0, 1, frame_num, 0, 11, 0, frame)
 
             self.rtp_send_socket.sendto(
                 packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
             )
+            self.rtcp_stats["packets_sent"] += 1
+            self.rtcp_stats["octets_sent"] += len(frame)
             sleep_time = audio.FRAME_DURATION / 1000
 
             # can we binary search the optimal rate for the audio? the answer is sorta,
@@ -777,6 +827,15 @@ class Client:
         buffer_size = 1024
 
         pa = pyaudio.PyAudio()
+        
+        mic_stream = pa.open(
+            format=pyaudio.paInt16,
+            channels=self.call["codec"]["channels"],
+            rate=self.call["codec"]["rate"],
+            input=True,
+            frames_per_buffer=512,
+        )
+
 
         try:
             # Open mic stream with higher quality settings
@@ -848,6 +907,7 @@ class Client:
                     )
 
                 return audio_data.tobytes()
+
 
             # VAD has memory of recent audio to reduce choppiness
             silence_duration = 0
@@ -923,7 +983,95 @@ class Client:
     RTCP Methods
     """
 
-    def listen_rtcp(self):
+    def send_rtcp_sr(self):
+        """Send RTCP SR packets."""
+        rtcp = RTCPPacket(
+            payload_type=200, report_count=1, length=0, ssrc=12435, version=2
+        )
+        rtcp.encode_sr(
+            self.rtcp_stats["last_packet_time"],
+            self.rtcp_stats["packets_sent"],
+            self.rtcp_stats["octets_sent"],
+        )
+        self.rtcp_socket.sendto(
+            rtcp.getpacket(), (self.dest_ip, self.call["rtcp_port"])
+        )
+
+        self.rtcp_stats["last_SR"] = int(time.time())
+
+    def send_rtcp_rr(self):
+        """Send RTCP RR packets."""
+        rtcp = RTCPPacket(
+            payload_type=201, report_count=1, length=0, ssrc=12435, version=2
+        )
+
+        # perform calculations for the RTCP stats
+
+        if self.received_stats["packets_received"] == 0:
+            self.rtcp_stats["fraction_lost"] = 0
+        else:
+            self.rtcp_stats["fraction_lost"] = (
+                self.received_stats["packets_lost"]
+                / self.received_stats["packets_received"]
+            )
+            self.rtcp_stats["fraction_lost"] = int(
+                self.rtcp_stats["fraction_lost"] * 256
+            )
+
+        if self.rtcp_stats["last_SR"] == 0:
+            dlsr = 0
+        else:
+            dlsr = int(time.time()) - self.rtcp_stats["last_SR"]
+
+        rtcp.encode_rr(
+            self.rtcp_stats["fraction_lost"],
+            self.rtcp_stats["packets_received"],
+            self.rtcp_stats["packets_lost"],
+            self.rtcp_stats["interarrival_jitter"],
+            self.rtcp_stats["last_SR"],
+            dlsr,
+        )
+
+        self.rtcp_stats["fraction_lost"] = 0
+
+        self.rtcp_socket.sendto(
+            rtcp.getpacket(), (self.dest_ip, self.call["rtcp_port"])
+        )
+        self.last_rtcp_time = time.time()
+
+    def listen_rtcp(self, port: int):
+        self.rtcp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rtcp_socket.bind((self.ip, port))
+        self.rtcp_socket.settimeout(1)
+
+        while self.active_call.is_set():
+            try:
+                data, addr = self.rtcp_socket.recvfrom(RTP_PACKET_SIZE)
+                packet = RTCPPacket(200)
+                packet.decode(data)
+
+                if packet.payload_type == 200:
+                    # sender report
+                    self.received_stats["last_SR"] = packet.last_sr
+                    self.received_stats["packets_sent"] = packet.sender_packet_count
+                    self.received_stats["octets_sent"] = packet.sender_octet_count
+                elif packet.payload_type == 201:
+                    # receiver report
+                    self.received_stats["fraction_lost"] = packet.fraction_lost
+                    self.received_stats["interarrival_jitter"] = (
+                        packet.interarrival_jitter
+                    )
+                    self.received_stats["last_SR"] = packet.last_sr
+                    self.received_stats["dlsr"] = packet.dlsr
+                # print RTCP packet
+                print(packet.getpacket().decode())
+            except socket.timeout:
+                continue
+            except ConnectionResetError:
+                self.display_message("Client closed connection")
+                break
+            except Exception as e:
+                print(e)
         pass
 
 

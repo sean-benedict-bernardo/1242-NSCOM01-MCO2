@@ -14,7 +14,7 @@ def generate_buffer_salt():
 
 
 class AudioStream:
-    FRAME_DURATION = 20  # milliseconds
+    FRAME_DURATION = 40  # milliseconds
 
     def __init__(self, filename: str, ac: int = 1, ar: int = 44100):
         self.filename = filename
@@ -52,7 +52,7 @@ class AudioStream:
         """Destructor to remove buffer file."""
         try:
             import os
-            os.remove(self.BUFFERFILE)
+            # os.remove(self.BUFFERFILE)
         except Exception:
             pass
 
@@ -83,7 +83,7 @@ class AudioStream:
 
 class AudioPlayer:
     def __init__(
-        self, encoding: str = "PCM", channels: int = 2, rate: int = 44100
+        self, encoding: str = "PCM", channels: int = 1, rate: int = 44100
     ):
         self.audio = pyaudio.PyAudio()
         self.stream = None
@@ -121,6 +121,7 @@ class AudioPlayer:
                     rate=self.rate,
                     output=True,
                 )
+
                 self.playing = True
                 # start thread to play audio
                 threading.Thread(target=self._play_from_queue, daemon=True).start()
