@@ -92,6 +92,11 @@ class AudioPlayer:
         self.playing = False
         self.lock = threading.Lock()  # to ensure that the audio queue is thread safe
 
+        # encoding standards
+        self.encoding = encoding
+        self.channels = channels
+        self.rate = rate
+
     def _play_from_queue(self):
         while self.playing:
             # we want to cache the last packet to be played
@@ -111,11 +116,10 @@ class AudioPlayer:
         """Plays audio and returns number of packets in buffer"""
         with self.lock:
             if not self.stream:
-                # TODO: add support for different audio formats
                 self.stream = self.audio.open(
                     format=self.audio.get_format_from_width(2),
-                    channels=2,
-                    rate=44100,
+                    channels=self.channels,
+                    rate=self.rate,
                     output=True,
                 )
                 self.playing = True

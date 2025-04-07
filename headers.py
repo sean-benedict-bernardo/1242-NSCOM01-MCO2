@@ -336,3 +336,28 @@ class RTPPacket:
     def getpacket(self):
         """Return RTP packet."""
         return self.header + self.payload
+
+RTCP_PAYLOAD_TYPES = {
+    200: "RTCP Sender Report",
+    201: "RTCP Reader Report",
+}
+
+class RTCPPacket:
+    HEADER_SIZE = 4
+
+    header = bytearray(HEADER_SIZE)
+
+    def encode(self, RC, PT, payload):
+        """Encode the RTCP packet."""
+
+
+        #   0                   1                   2                   3
+        #   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        # |V=2|P|    RC   |   PT=200      |             length            |
+        # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+        self.header[0] = (2 << 6) & 0xFF
+
+        self.header = header
+        self.payload = payload

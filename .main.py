@@ -53,17 +53,17 @@ class Client:
 
         # rtcp socket
         self.rtcp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.rtcp_server = threading.Thread(target=self.listen_rtp)
+        self.rtcp_server = threading.Thread(target=self.listen_rtcp)
         self.rtcp_server.daemon = True  # ties the thread to the main thread
 
         # threading locks
-        self.stop_send = threading.Event()
-        self.stop_send.set()
+        self.active_call = threading.Lock()
+        
+        self.is_playing = threading.Event()
 
         self.last_packet_time = time.time()
         self.last_rtcp_time = time.time()
 
-        self.active_call = False
         self.call = {}
         self.cseq = 1
 
@@ -74,9 +74,6 @@ class Client:
         self.master.title(APPNAME)
         self.master.protocol("WM_DELETE_WINDOW", self.onclose)
 
-        # create the widgets
-        self.make_widgets()
-
         # start the SIP server
         try:
             self.sip_server.start()
@@ -84,6 +81,11 @@ class Client:
             self.keep_threads = False
             self.sip_server.join()
             self.master.destroy
+        
+        # create the widgets
+        self.make_widgets()
+        
+        self.widgets["my_ip"].config(text=f"{self.ip}:{self.SIP_PORT}")
 
         self.master.mainloop()
 
@@ -103,6 +105,15 @@ class Client:
     def display_prompt(self, message) -> bool:
         """display a prompt to the user"""
         return tkmb.askyesno(title=APPNAME, message=message)
+
+    def toggle_call_button(self):
+        """toggle the call button"""
+        if self.current_state != self.IN_CALL:
+            self.widgets["conn_btn"]["state"] = "normal"
+            self.widgets["term_btn"]["state"] = "disabled"
+        else:
+            self.widgets["conn_btn"]["state"] = "disabled"
+            self.widgets["term_btn"]["state"] = "normal"
 
     def toggle_button(self, button_name: str):
         """disable a button"""
@@ -156,17 +167,22 @@ class Client:
         # DEBUG: set default IP address to localhost
         self.widgets["recipient_ip_entry"].insert(0, self.ip)
 
-        self.widgets["recipient_ip_entry"].bind("<Return>", lambda e: self.connect())
+        self.widgets["recipient_ip_entry"].bind("<Return>", lambda: self.connect())
 
         self.widgets["recipient_ip_entry"].grid(
             row=4, column=1, columnspan=3, sticky="e"
         )
 
         # TODO: Update button and command depending on current state
-        self.widgets["conn_term_btn"] = tk.Button(
+        self.widgets["conn_btn"] = tk.Button(
             self.master, text="Connect", font=standard_font, command=self.connect
         )
-        self.widgets["conn_term_btn"].grid(row=4, column=4)
+        self.widgets["conn_btn"].grid(row=4, column=4)
+
+        self.widgets["term_btn"] = tk.Button(
+            self.master, text="End Call", font=standard_font, command=lambda: self.end_call(True)
+        )
+        self.widgets["term_btn"].grid(row=4, column=5)
 
         # horizontal separator
         self.widgets["separator_2"] = ttk.Separator(self.master, orient="horizontal")
@@ -200,6 +216,8 @@ class Client:
             self.master, text="Mic Status: Closed", font=standard_font
         )
         self.widgets["mic_status"].grid(row=8, column=1)
+        
+        self.toggle_call_button()
 
     """
     Auxiliary Methods Below
@@ -246,7 +264,7 @@ class Client:
 
     def accept_call(self, sip_packet: SIPPacket):
         """Accept an incoming call."""
-        self.active_call = True
+        self.current_state = self.IN_CALL
         self.dest_ip = sip_packet.src_ip
         self.call["rtp_port"] = sip_packet.body["m"]["port"]
         self.call["rtcp_port"] = sip_packet.body["m"]["port"] + 1
@@ -258,7 +276,39 @@ class Client:
         self.rtp_server = threading.Thread(
             target=self.listen_rtp, args=(self.call["rtp_port"],), daemon=True
         )
+
+        self.toggle_call_button()
+
         self.rtp_server.start()
+
+    def end_call(self, initiate = False):
+        print("Ending call...")
+        if self.current_state == self.IDLE:
+            self.display_error("No active call.")
+            return
+        
+        if initiate:
+            bye = SIPPacket()
+            bye.encode(
+                is_response=False,
+                method="BYE",
+                src_ip=self.ip,
+                dest_ip=self.dest_ip,
+                call_id=self.call["Call-ID"],
+                branch=self.call["Branch"],
+                cseq=self.cseq,
+            )
+
+            self.sip_socket.sendto(bye.getpacket(), (self.dest_ip, self.dest_sip_port))
+            log_message((self.dest_ip, self.dest_sip_port), "SIP Sent", bye.getpacket().decode())
+
+
+
+        self.current_state = self.IDLE
+        self.dest_ip = ""
+        self.call = {}
+
+        self.toggle_call_button()
 
     def send_audio(self):
         # get file from entry box
@@ -266,7 +316,7 @@ class Client:
 
         file_path = "files/" + filename
 
-        if self.active_call == False or self.dest_ip == "":
+        if self.current_state != self.IN_CALL or self.dest_ip == "":
             self.display_error("No active call.")
             return
 
@@ -274,7 +324,8 @@ class Client:
         if not os.path.exists(file_path) or not os.path.isfile(file_path):
             self.display_error("File not found.")
         else:
-            self.stop_send.clear()
+            # set is_playing state to stop listening while sending
+            self.is_playing.clear()
             send_rtp_thread = threading.Thread(target=self.send_rtp, args=(file_path,))
             send_rtp_thread.start()
             send_rtp_thread.join()
@@ -314,9 +365,6 @@ class Client:
                     ):
                         return candidate
 
-        # disable the connect button
-        self.toggle_button("conn_term_btn")
-
         # create a new call
         make_call_id()
         make_branch()
@@ -337,17 +385,21 @@ class Client:
             cseq=self.cseq,
         )
 
-        print(invite_msg.getpacket().decode())
+        # log_message(addr, "SIP Sent", invite_msg.getpacket().decode())
+
+        print(self.sip_socket)
 
         self.sip_socket.sendto(invite_msg.getpacket(), addr)
-        # instruct listen sip to wait for a response
+
+        self.current_state = self.CALLING
+        self.toggle_call_button()
 
     def handle_sip(self, message: SIPPacket, addr: tuple):
         """Handle SIP messages."""
 
         log_message(addr, "SIP Received", message.getpacket().decode())
 
-        if self.active_call:
+        if self.current_state == self.IN_CALL:
             # send 486: Busy Here
             response = SIPPacket()
             response.encode(
@@ -403,13 +455,14 @@ class Client:
                     log_message(addr, "SIP Sent", response.getpacket().decode())
 
                     if confirm_call:
-                        self.toggle_button("conn_term_btn")
-                        self.active_call = True
                         self.accept_call(message)
 
                 case "BYE":
-                    if not self.active_call:
+                    if self.current_state != self.IN_CALL:
+                        self.display_error("No active call.")
                         return
+                    else:
+                        self.display_message("Terminating call.")
 
                     # send 200 OK
                     response = SIPPacket()
@@ -425,9 +478,6 @@ class Client:
 
                     self.sip_socket.sendto(response.getpacket(), addr)
                     log_message(addr, "SIP Sent", response.getpacket().decode())
-
-                    self.active_call = False
-                    self.toggle_button("conn_term_btn")
         else:
             match message.res_code:
                 case 100:
@@ -435,21 +485,25 @@ class Client:
                 case 180:
                     self.display_message("SIP message 180: Ringing")
                 case 200:
-                    self.display_message("Call Accepted. Starting RTP stream.")
-                    self.accept_call(message)
+                    if self.current_state == self.CALLING:    
+                        self.display_message("Call Accepted. Starting RTP stream.")
+                        self.accept_call(message)
+                    elif self.current_state == self.IN_CALL:
+                        self.display_message("Ending call.")
+                        self.end_call()
                 case 486:
                     self.display_error("Recipient is busy.")
-                    self.toggle_button("conn_term_btn")
+                    self.current_state = self.IDLE
                 case 603:
                     self.display_error("Recipient declined.")
-                    self.toggle_button("conn_term_btn")
+                    self.current_state = self.IDLE
+            self.toggle_call_button()
 
     def listen_sip(self):
         # listen for SIP messages
         while True:
             try:
                 self.sip_socket.bind((self.ip, self.SIP_PORT))
-                self.widgets["my_ip"].config(text=f"{self.ip}:{self.SIP_PORT}")
                 break
             except OSError:
                 print(
@@ -474,7 +528,8 @@ class Client:
                     continue
                 except ConnectionResetError:
                     self.display_message("Client is unreachable")
-                    self.toggle_button("conn_term_btn")
+                    self.current_state = self.IDLE
+                    self.toggle_call_button()
         finally:
             self.sip_socket.close()
 
@@ -484,15 +539,16 @@ class Client:
 
     def listen_rtp(self, port: int):
         """Listen for RTP packets."""
-
         self.rtp_listen_socket.bind((self.ip, port))
         self.rtp_listen_socket.settimeout(1)
-
         current_frame = 0
 
         audio_player = AudioPlayer()
 
         while self.keep_threads:
+            if self.is_playing.is_set():
+                continue
+
             try:
                 data, addr = self.rtp_listen_socket.recvfrom(4096)
 
@@ -513,14 +569,16 @@ class Client:
                 #     continue
 
                 self.last_packet_time = time.time()
+                print("listen_rtp: ", self.last_packet_time, "PLAYING")
 
                 audio_player.play_audio_packet(payload)
             except socket.timeout:
+                print("listen_rtp: ", time.time())
                 pass  # do nothing
             except ConnectionResetError:
                 self.display_message("Client closed connection")
                 self.keep_threads = False
-                self.sip_socket.close()
+                self.listen_rtp_socket.close()
                 break
             except Exception as e:
                 print(e)
@@ -538,51 +596,21 @@ class Client:
         except Exception as e:
             self.display_error(f"Error opening audio file: {e}")
             return
+        
+        self.is_playing.set()
 
-        # Load all frames into memory
-        all_frames = audio.all_frames()
-        all_packets = []
-        if not all_frames:
-            self.display_error("No frames to send.")
-            return
-        else:
-            for frame, index in all_frames:
-                packet = RTPPacket()
-                packet.encode(2, 0, 0, 1, index, 0, 10, 0, frame)
-                all_packets.append(packet.getpacket())
-
-        # send the packets
         while True:
-            if len(all_packets) == 0:
-                break
-            packet = all_packets.pop(0)
-
-            if not packet:
-                print("No more frames or paused")
-                break
-
-            self.rtp_send_socket.sendto(
-                packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
-            )
-
-            sleep_time = audio.FRAME_DURATION / 1000
-
-            # can we binary search the optimal rate for the audio? the answer is sorta,
-            # ideally the sleep time should be 100% but considering network latency
-            # this is the equilibrium between not hearing choppy audio and
-            # not flooding the client buffer with packets
-            time.sleep(sleep_time * 0.9745)
-        """
-        while True:
+            print("send_rtp: ", time.time())
+            
             if self.call["rtp_port"] == 0:
                 return
 
             frame, frame_num = audio.next_frame()
             if not frame:
-                print("No more frames or paused")
+                print(f"Finished sending ${filename}.")
+                self.is_playing.clear()
                 break
 
-            print(frame_num)
 
             # encode the frame into an RTP packet
             packet = RTPPacket()
@@ -598,7 +626,6 @@ class Client:
             # this is the equilibrium between not hearing choppy audio and
             # not flooding the client buffer with packets
             time.sleep(sleep_time * 0.9745)
-        """
 
     """
     RTCP Methods
