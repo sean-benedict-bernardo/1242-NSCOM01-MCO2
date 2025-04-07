@@ -92,7 +92,7 @@ And response codes:
 For the purposes of this project, the test cases will have two clients running on two different computers, clients A and B. The test cases will be run on the client side and will be tested for the following scenarios:
 
 1. SIP HANDSHAKE (including INVITE, ACK, and relevant SDP)
-
+Note: While 100 Trying is normally the first response to an INVITE, it is not implemented in this project, given the nature of the project being only peer to peer on a local network.
 Client A (caller)
 ```
 ===== 192.168.5.143:5060 | SIP Sent =====
@@ -318,4 +318,52 @@ Max-Forwards: 70
 User-Agent: SKOIP/0.1
 Content-Type: application/sdp
 Content-Length: 203
+```
+
+3. RTCP Sender Report (SR)
+Note: Client A is the sender thus no terminal output is shown here
+
+Client B (callee)
+```
+=== Sender Report ===
+SSRC: 12435
+NTP Timestamp: 3953050484
+Last RTP Timestamp: 1744061684
+Packet Count: 0
+Octet Count: 0
+
+=== Sender Report ===
+SSRC: 12435
+NTP Timestamp: 3953050494
+Last RTP Timestamp: 1744061694
+Packet Count: 114
+Octet Count: 311290
+
+=== Sender Report ===
+SSRC: 12435
+NTP Timestamp: 3953050504
+Last RTP Timestamp: 1744061704
+Packet Count: 418
+Octet Count: 933882
+
+=== Sender Report ===
+SSRC: 12435
+NTP Timestamp: 3953050534
+Last RTP Timestamp: 1744061734
+Packet Count: 1133
+Octet Count: 2398202
+
+=== Sender Report ===
+SSRC: 12435
+NTP Timestamp: 3953050544
+Last RTP Timestamp: 1744061744
+Packet Count: 1392
+Octet Count: 2928634
+
+=== Sender Report ===
+SSRC: 12435
+NTP Timestamp: 3953050554
+Last RTP Timestamp: 1744061754
+Packet Count: 1496
+Octet Count: 3219444
 ```
