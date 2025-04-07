@@ -106,7 +106,7 @@ class SIPPacket:
                     "media": "audio",
                     "port": rtp_port,
                     "proto": "RTP/AVP",
-                    "fmt": [codec_pt],
+                    "fmt": codec_pt,
                 },
                 # f"rtpmap:0 {codec_type}/{codec_rate}/{codec_channels}"
                 "a": {
@@ -217,7 +217,7 @@ class SIPPacket:
             message += "\r\n"
             for key, val in self.body.items():
                 if key == "m" and isinstance(val, dict):
-                    val = f"{val['media']} {val['port']} {val['proto']} {' '.join(val['fmt'])}"
+                    val = f"{val['media']} {val['port']} {val['proto']} {val['fmt']}"
                 elif key == "a" and isinstance(val, dict):
                     # "rtpmap": f"{codec_pt} {codec_type}/{codec_rate}/{codec_channels}",
                     val = f"rtpmap:{val['codec_pt']} {val['codec_type']}/{val['codec_rate']}/{val['codec_channels']}"
