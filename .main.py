@@ -729,7 +729,7 @@ class Client:
         self.rtp_listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtp_listen_socket.bind((self.ip, port))
         self.rtp_listen_socket.settimeout(1)
-        current_frame = 0
+        self.current_frame = 0
 
         print(self.rtp_listen_socket)
 
@@ -753,6 +753,10 @@ class Client:
                 if not payload:
                     continue
 
+                if packet.seqnum() == 0:
+                    # reset the current frame number
+                    current_frame = 0
+
                 # ignore out of sequence frames
                 if packet.seqnum() < current_frame:
                     continue
@@ -772,7 +776,7 @@ class Client:
                 audio_player.play_audio_packet(payload)
             except socket.timeout:
                 # print("listen_rtp: ", time.time())
-                pass  # do nothing
+                continue  # do nothing
             except ConnectionResetError:
                 self.display_message("Client closed connection")
                 self.keep_threads = False
