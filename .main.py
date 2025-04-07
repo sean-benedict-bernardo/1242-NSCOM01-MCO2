@@ -65,6 +65,8 @@ class Client:
         self.is_mic_on = threading.Event()
         self.is_playing = threading.Event()
 
+        self.awaiting_response = threading.Event()
+
         self.last_packet_time = time.time()
         self.last_rtcp_time = time.time()
 
@@ -393,6 +395,7 @@ class Client:
 
         self.rtp_listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtp_send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rtcp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtp_server = threading.Thread(target=self.listen_rtp)
 
         self.toggle_call_button()
@@ -458,8 +461,6 @@ class Client:
             )
 
         def select_rtp_port():
-            return 51125
-
             # cycle until a port is found
             while True:
 
@@ -469,6 +470,7 @@ class Client:
                 candidate = random.randint(49152, 65535) & 0xFFFE  # even number
 
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(0.5)
                     # check if candidate (RTP) and next port (RTCP) are free
                     if (
                         s.connect_ex(("localhost", candidate)) != 0
@@ -499,10 +501,9 @@ class Client:
             codec_channels=1,
         )
 
-        # log_message(addr, "SIP Sent", invite_msg.getpacket().decode())
-
-        print(self.sip_socket)
-
+        log_message(addr, "SIP Sent", invite_msg.getpacket().decode())
+        self.awaiting_response.set()
+        self.sip_wait_time = time.time()
         self.sip_socket.sendto(invite_msg.getpacket(), addr)
 
         self.current_state = self.CALLING
@@ -697,7 +698,18 @@ class Client:
 
                     # handle the SIP packet
                     self.handle_sip(extracted, addr)
+
+                    if self.awaiting_response.is_set():
+                        self.awaiting_response.clear()
+
                 except socket.timeout:
+                    if self.awaiting_response.is_set():
+                        print("Awaiting response...")
+                        if time.time() - self.sip_wait_time > 10:
+                            self.display_error("No response from recipient.")
+                            self.awaiting_response.clear()
+                            self.current_state = self.IDLE
+                            self.toggle_call_button()
                     continue
                 except ConnectionResetError:
                     self.display_message("Client is unreachable")
@@ -723,8 +735,8 @@ class Client:
         audio_player = AudioPlayer(encoding, channels, rate)
 
         while self.active_call.is_set():
-            # check if more than 5 seconds since the last rtcp packet
-            if time.time() - self.rtcp_stats["last_SR"] > 5:
+            # check if more than 10 seconds since the last rtcp packet
+            if time.time() - self.rtcp_stats["last_SR"] > 10:
                 self.send_rtcp_rr()
                 self.send_rtcp_sr()
 
@@ -754,11 +766,11 @@ class Client:
                 current_frame = packet.seqnum()
 
                 self.last_packet_time = time.time()
-                print("listen_rtp: ", self.last_packet_time, "PLAYING")
+                # print("listen_rtp: ", self.last_packet_time, "PLAYING")
 
                 audio_player.play_audio_packet(payload)
             except socket.timeout:
-                print("listen_rtp: ", time.time())
+                # print("listen_rtp: ", time.time())
                 pass  # do nothing
             except ConnectionResetError:
                 self.display_message("Client closed connection")
@@ -805,6 +817,7 @@ class Client:
             self.rtp_send_socket.sendto(
                 packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
             )
+            print(frame_num, "sent")
             self.rtcp_stats["packets_sent"] += 1
             self.rtcp_stats["octets_sent"] += len(frame)
             sleep_time = audio.FRAME_DURATION / 1000
@@ -827,7 +840,7 @@ class Client:
         buffer_size = 1024
 
         pa = pyaudio.PyAudio()
-        
+
         mic_stream = pa.open(
             format=pyaudio.paInt16,
             channels=self.call["codec"]["channels"],
@@ -835,7 +848,6 @@ class Client:
             input=True,
             frames_per_buffer=512,
         )
-
 
         try:
             # Open mic stream with higher quality settings
@@ -908,7 +920,6 @@ class Client:
 
                 return audio_data.tobytes()
 
-
             # VAD has memory of recent audio to reduce choppiness
             silence_duration = 0
             voice_buffer = []
@@ -935,7 +946,7 @@ class Client:
                             1,
                             seqnum,
                             self.call.get("ssrc", random.randint(1000, 9999)),
-                            10,
+                            11,
                             timestamp,
                             enhanced_data,
                         )
@@ -993,14 +1004,16 @@ class Client:
             self.rtcp_stats["packets_sent"],
             self.rtcp_stats["octets_sent"],
         )
-        self.rtcp_socket.sendto(
-            rtcp.getpacket(), (self.dest_ip, self.call["rtcp_port"])
-        )
+
+        to_send = rtcp.getpacket()
+
+        self.rtcp_socket.sendto(to_send, (self.dest_ip, self.call["rtcp_port"]))
 
         self.rtcp_stats["last_SR"] = int(time.time())
 
     def send_rtcp_rr(self):
         """Send RTCP RR packets."""
+
         rtcp = RTCPPacket(
             payload_type=201, report_count=1, length=0, ssrc=12435, version=2
         )
@@ -1025,8 +1038,8 @@ class Client:
 
         rtcp.encode_rr(
             self.rtcp_stats["fraction_lost"],
-            self.rtcp_stats["packets_received"],
             self.rtcp_stats["packets_lost"],
+            self.rtcp_stats["packets_received"],
             self.rtcp_stats["interarrival_jitter"],
             self.rtcp_stats["last_SR"],
             dlsr,
@@ -1050,28 +1063,54 @@ class Client:
                 packet = RTCPPacket(200)
                 packet.decode(data)
 
+                for attr, value in vars(packet).items():
+                    print(f"{attr}: {value}", end=" | ")
+                print()
+
                 if packet.payload_type == 200:
                     # sender report
-                    self.received_stats["last_SR"] = packet.last_sr
                     self.received_stats["packets_sent"] = packet.sender_packet_count
                     self.received_stats["octets_sent"] = packet.sender_octet_count
+
+                    print(
+                        "=== Sender Report ===",
+                        f"Sender SSRC: {packet.sender_ssrc}",
+                        f"Sender NTP Timestamp: {packet.sender_ntp_timestamp}",
+                        f"Sender RTP Timestamp: {packet.sender_rtp_timestamp}",
+                        f"Sender Packet Count: {packet.sender_packet_count}",
+                        f"Sender Octet Count: {packet.sender_octet_count}",
+                        "",
+                        sep="\n",
+                    )
+
                 elif packet.payload_type == 201:
                     # receiver report
+                    self.received_stats["last_SR"] = packet.last_sr
                     self.received_stats["fraction_lost"] = packet.fraction_lost
                     self.received_stats["interarrival_jitter"] = (
                         packet.interarrival_jitter
                     )
-                    self.received_stats["last_SR"] = packet.last_sr
                     self.received_stats["dlsr"] = packet.dlsr
-                # print RTCP packet
-                print(packet.getpacket().decode())
+
+                    
+                    print(
+                        "=== Receiver Report ===",
+                        f"Sender SSRC: {packet.sender_ssrc}",
+                        f"Fraction Lost: {packet.fraction_lost}",
+                        f"Packets Lost: {packet.packets_lost}",
+                        f"Highest Seqnum: {packet.highest_seqnum}",
+                        f"Jitter: {packet.jitter}",
+                        f"Last SR: {packet.last_sr}",                        
+                        "",
+                        sep="\n",
+                    )
             except socket.timeout:
                 continue
             except ConnectionResetError:
                 self.display_message("Client closed connection")
                 break
             except Exception as e:
-                print(e)
+                print(f"Error: {e}, Object: {type(e).__name__}")
         pass
 
 

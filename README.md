@@ -85,8 +85,237 @@ And response codes:
 ## Project Constraints:
 - This project is designed to work with two computers connected to the same local network.
 - The two way functionality is broken. At minimum should work for one way communication.
+- A known issue is that the audio quality can go down, this is a result of the threading as its implemented in python.
 
 
 ## Test Cases:
-1. SIP HANDSHAKE
-2. SIP INVITE
+For the purposes of this project, the test cases will have two clients running on two different computers, clients A and B. The test cases will be run on the client side and will be tested for the following scenarios:
+
+1. SIP HANDSHAKE (including INVITE, ACK, and relevant SDP)
+
+Client A (caller)
+```
+===== 192.168.5.143:5060 | SIP Sent =====
+INVITE sip:192.168.5.143 SIP/2.0
+Via: SIP/2.0/UDP 192.168.5.178;branch=z9hG4bK24be4bff
+From: <sip:192.168.5.178>
+To: <sip:192.168.5.143>
+Call-ID: 100c10c7a
+CSeq: 1
+Contact: <sip:192.168.5.178>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+Content-Type: application/sdp
+Content-Length: 211
+
+v=0
+o=- 0 0 IN IP4 192.168.5.178
+s=SKOIP Call
+c=IN IP4
+t=0 0
+m=audio 51125 RTP/AVP 11
+a=rtpmap:11 LPCM/44100/1
+
+
+===== 192.168.5.143:5060 | SIP Received =====
+SIP/2.0 180 Ringing
+Via: SIP/2.0/UDP 192.168.5.143;branch=z9hG4bK24be4bff
+From: <sip:192.168.5.143>
+To: <sip:192.168.5.178>
+Call-ID: 100c10c7a
+CSeq: 1
+Contact: <sip:192.168.5.143>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+
+
+===== 192.168.5.143:5060 | SIP Received =====
+SIP/2.0 200 OK
+Via: SIP/2.0/UDP 192.168.5.143;branch=z9hG4bK24be4bff
+From: <sip:192.168.5.143>
+To: <sip:192.168.5.178>
+Call-ID: 100c10c7a
+CSeq: 1
+Contact: <sip:192.168.5.143>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+Content-Type: application/sdp
+Content-Length: 211
+
+v=0
+o=- 0 0 IN IP4 192.168.5.143
+s=SKOIP Call
+c=IN IP4
+t=0 0
+m=audio 51125 RTP/AVP 11
+a=rtpmap:11 LPCM/44100/1
+
+
+===== 192.168.5.143:5060 | SIP Sent =====
+ACK sip:192.168.5.143 SIP/2.0
+Via: SIP/2.0/UDP 192.168.5.178;branch=z9hG4bK24be4bff
+From: <sip:192.168.5.178>
+To: <sip:192.168.5.143>
+Call-ID: 100c10c7a
+CSeq: 1
+Contact: <sip:192.168.5.178>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+Content-Type: application/sdp
+Content-Length: 211
+
+v=0
+o=- 0 0 IN IP4 192.168.5.178
+s=SKOIP Call
+c=IN IP4
+t=0 0
+m=audio 51125 RTP/AVP 11
+a=rtpmap:11 LPCM/44100/1
+```
+
+Client B (callee)
+```
+===== 192.168.5.178:5060 | SIP Received =====
+INVITE sip:192.168.5.143 SIP/2.0
+Via: SIP/2.0/UDP 192.168.5.178;branch=z9hG4bKeb9157e9
+From: <sip:192.168.5.178>
+To: <sip:192.168.5.143>
+Call-ID: 1bb4484f5
+CSeq: 1
+Contact: <sip:192.168.5.178>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+Content-Type: application/sdp
+Content-Length: 211
+
+v=0
+o=- 0 0 IN IP4 192.168.5.178
+s=SKOIP Call
+c=IN IP4
+t=0 0
+m=audio 51125 RTP/AVP 11
+a=rtpmap:11 LPCM/44100/1
+
+
+===== 192.168.5.178:5060 | SIP Sent =====
+SIP/2.0 180 Ringing
+Via: SIP/2.0/UDP 192.168.5.143;branch=z9hG4bKeb9157e9
+From: <sip:192.168.5.143>
+To: <sip:192.168.5.178>
+Call-ID: 1bb4484f5
+CSeq: 1
+Contact: <sip:192.168.5.143>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+
+
+===== 192.168.5.178:5060 | SIP Sent =====
+SIP/2.0 200 OK
+Via: SIP/2.0/UDP 192.168.5.143;branch=z9hG4bKeb9157e9
+From: <sip:192.168.5.143>
+To: <sip:192.168.5.178>
+Call-ID: 1bb4484f5
+CSeq: 1
+Contact: <sip:192.168.5.143>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+Content-Type: application/sdp
+Content-Length: 211
+
+v=0
+o=- 0 0 IN IP4 192.168.5.143
+s=SKOIP Call
+c=IN IP4
+t=0 0
+m=audio 51125 RTP/AVP 11
+a=rtpmap:11 LPCM/44100/1
+
+
+===== 192.168.5.178:5060 | SIP Received =====
+ACK sip:192.168.5.143 SIP/2.0
+Via: SIP/2.0/UDP 192.168.5.178;branch=z9hG4bKeb9157e9
+From: <sip:192.168.5.178>
+To: <sip:192.168.5.143>
+Call-ID: 1bb4484f5
+CSeq: 1
+Contact: <sip:192.168.5.178>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+Content-Type: application/sdp
+Content-Length: 211
+
+v=0
+o=- 0 0 IN IP4 192.168.5.178
+s=SKOIP Call
+c=IN IP4
+t=0 0
+m=audio 51125 RTP/AVP 11
+a=rtpmap:11 LPCM/44100/1
+```
+
+2. Teardown (BYE)
+Client A (caller)
+```
+Ending call...
+===== 192.168.5.143:5060 | SIP Sent =====
+BYE sip:192.168.5.143 SIP/2.0
+Via: SIP/2.0/UDP 192.168.5.178;branch=z9hG4bK1265406e
+From: <sip:192.168.5.178>
+To: <sip:192.168.5.143>
+Call-ID: 1a71d14de
+CSeq: 2
+Contact: <sip:192.168.5.178>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+
+
+===== 192.168.5.143:5060 | SIP Received =====
+SIP/2.0 200 OK
+Via: SIP/2.0/UDP 192.168.5.143;branch=z9hG4bK1265406e
+From: <sip:192.168.5.143>
+To: <sip:192.168.5.178>
+Call-ID: 1a71d14de
+CSeq: 2
+Contact: <sip:192.168.5.143>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+Content-Type: application/sdp
+Content-Length: 203
+
+v=0
+o=- 0 0 IN IP4 192.168.5.143
+s=SKOIP Call
+c=IN IP4
+t=0 0
+m=audio 0 RTP/AVP 10
+a=rtpmap:10 LPCM/0/0
+```
+
+Client B (callee)
+```
+===== 192.168.5.178:5060 | SIP Received =====
+BYE sip:192.168.5.143 SIP/2.0
+Via: SIP/2.0/UDP 192.168.5.178;branch=z9hG4bK1265406e
+From: <sip:192.168.5.178>
+To: <sip:192.168.5.143>
+Call-ID: 1a71d14de
+CSeq: 2
+Contact: <sip:192.168.5.178>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+
+
+Ending call...
+===== 192.168.5.178:5060 | SIP Sent =====
+SIP/2.0 200 OK
+Via: SIP/2.0/UDP 192.168.5.143;branch=z9hG4bK1265406e
+From: <sip:192.168.5.143>
+To: <sip:192.168.5.178>
+Call-ID: 1a71d14de
+CSeq: 2
+Contact: <sip:192.168.5.143>
+Max-Forwards: 70
+User-Agent: SKOIP/0.1
+Content-Type: application/sdp
+Content-Length: 203
+```

@@ -64,7 +64,7 @@ class SIPPacket:
         branch: str = "",
         cseq: int = 0,
         codec_type: str = "LPCM",
-        codec_pt: int = 10,
+        codec_pt: int = 11,
         codec_rate: int = 0,
         codec_channels: int = 0,
     ) -> bytes:
