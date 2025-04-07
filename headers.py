@@ -92,7 +92,7 @@ class SIPPacket:
             "User-Agent": "SKOIP/0.1",
         }
 
-        if method and method == "INVITE" or is_response and res_code == 200:
+        if method and method in ("INVITE", "ACK") or is_response and res_code == 200:
             # SDP body
             self.fields["Content-Type"] = "application/sdp"
             self.body = {
