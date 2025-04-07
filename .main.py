@@ -123,6 +123,9 @@ class Client:
         self.master.mainloop()
 
     def onclose(self):
+        if self.current_state == self.IN_CALL:
+            self.end_call()
+
         self.keep_threads = False
         print("Closing...")
         exit(0)
@@ -929,18 +932,16 @@ class Client:
         while self.active_call.is_set():
             try:
                 data, addr = self.rtcp_socket.recvfrom(RTP_PACKET_SIZE)
-                packet = RTCPPacket()
+                packet = RTCPPacket(200)
                 packet.decode(data)
 
                 if packet.payload_type == 200:
                     # sender report
-                    packet.decode_sr()
                     self.received_stats["last_SR"] = packet.last_sr
                     self.received_stats["packets_sent"] = packet.sender_packet_count
                     self.received_stats["octets_sent"] = packet.sender_octet_count
                 elif packet.payload_type == 201:
                     # receiver report
-                    packet.decode_rr()
                     self.received_stats["fraction_lost"] = packet.fraction_lost
                     self.received_stats["interarrival_jitter"] = (
                         packet.interarrival_jitter

@@ -344,12 +344,16 @@ class RTCPPacket:
 
     def __init__(
         self,
-        payload_type: int,
+        payload_type: int = 0,
         report_count: int = 0,
         length: int = 0,
         ssrc: int = 0,
         version: int = 2,
     ):
+        # decode mode
+        if payload_type == 0:
+            return
+
         self.version = version
         self.padding = 0
         self.extension = 0
@@ -369,6 +373,11 @@ class RTCPPacket:
         self.header[0] = (
             (self.version << 6) | (self.padding << 5) | (self.report_count & 0x1F)
         )
+
+        if payload_type == 200:
+            length = 24 // 4 - 1  # length in 32-bit words
+        elif payload_type == 201:
+            length = 32 // 4 - 1  # length in 32-bit words
 
         # this is either 200 or 201 for RTCP SR or RR
         self.header[1] = self.payload_type & 0xFF
