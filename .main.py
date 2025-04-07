@@ -730,7 +730,9 @@ class Client:
         audio = None
         try:
             audio = AudioStream(
-                filename, self.call["codec"]["rate"], self.call["codec"]["channels"]
+                filename,
+                self.call["codec"]["channels"],
+                self.call["codec"]["rate"],
             )
         except Exception as e:
             self.display_error(f"Error opening audio file: {e}")
@@ -781,15 +783,15 @@ class Client:
             mic_stream = pa.open(
                 format=pyaudio.paInt16,
                 channels=self.call["codec"]["channels"],
-                rate=self.call["codec"]["rate"], 
+                rate=self.call["codec"]["rate"],
                 input=True,
                 frames_per_buffer=buffer_size,
             )
-            
+
             seqnum = 0
             timestamp = 0
             timestamp_increment = buffer_size
-            
+
             # Calculate dynamic threshold based on background noise
             def calculate_noise_threshold():
                 """Sample background noise to set dynamic threshold."""
@@ -802,23 +804,23 @@ class Client:
                     volume = np.abs(audio_data).mean()
                     samples.append(volume)
                     time.sleep(0.05)
-                
+
                 # Set threshold above the average noise
                 noise_floor = sum(samples) / len(samples)
-                return max(noise_floor * 1.5, 35)  
-            
+                return max(noise_floor * 1.5, 35)
+
             # Get initial noise threshold
             threshold = calculate_noise_threshold()
             print(f"Noise threshold set to: {threshold}")
-            
+
             # Enhanced voice activity detection
             def is_voice(data, dynamic_threshold):
                 """Improved voice activity detection with dynamic threshold."""
                 audio_data = np.frombuffer(data, dtype=np.int16)
                 volume = np.abs(audio_data).mean()
-                
+
                 # Detect voice with hysteresis to avoid choppy audio
-                if hasattr(is_voice, 'active'):
+                if hasattr(is_voice, "active"):
 
                     if is_voice.active and volume > dynamic_threshold * 0.7:
                         return True
@@ -831,76 +833,76 @@ class Client:
                 else:
                     is_voice.active = volume > dynamic_threshold
                     return is_voice.active
-            
+
             # Simple audio enhancement for clearer voice
             def enhance_audio(data):
                 """Simple audio enhancement for clearer voice."""
                 audio_data = np.frombuffer(data, dtype=np.int16)
 
                 max_val = np.max(np.abs(audio_data))
-                if max_val > 100:  
+                if max_val > 100:
 
-                    gain = min(26000 / max_val, 3.0)  
-                    audio_data = np.clip(audio_data * gain, -32767, 32767).astype(np.int16)
-                
+                    gain = min(26000 / max_val, 3.0)
+                    audio_data = np.clip(audio_data * gain, -32767, 32767).astype(
+                        np.int16
+                    )
+
                 return audio_data.tobytes()
-            
+
             # VAD has memory of recent audio to reduce choppiness
             silence_duration = 0
             voice_buffer = []
-            
+
             print("Microphone ready and sending")
-            
+
             while self.is_mic_on.is_set() and self.active_call.is_set():
                 try:
                     raw_data = mic_stream.read(buffer_size, exception_on_overflow=False)
-                
 
                     if is_voice(raw_data, threshold):
                         # Process audio for better quality
                         enhanced_data = enhance_audio(raw_data)
-                        
+
                         # Create and send RTP packet
                         packet = RTPPacket()
-                        
+
                         # Using positional arguments instead of keyword arguments
                         # The correct order is: version, padding, extension, marker, seqnum, ssrc, payload_type, timestamp, payload
                         packet.encode(
-                            2,               
-                            0,               
-                            0,          
-                            1,      
-                            seqnum,             
-                            self.call.get("ssrc", random.randint(1000, 9999)), 
-                            10,                 
-                            timestamp,          
-                            enhanced_data      
+                            2,
+                            0,
+                            0,
+                            1,
+                            seqnum,
+                            self.call.get("ssrc", random.randint(1000, 9999)),
+                            10,
+                            timestamp,
+                            enhanced_data,
                         )
-                        
 
                         self.rtp_send_socket.sendto(
                             packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
                         )
 
                         silence_duration = 0
-                        
+
                     else:
                         # Count silence frames
                         silence_duration += 1
-                        
+
                         # After 50 frames of silence, recalibrate noise threshold
                         if silence_duration == 50:
                             threshold = calculate_noise_threshold()
                             print(f"Recalibrated noise threshold: {threshold}")
-                    
+
                     # Update sequence number and timestamp
                     seqnum = (seqnum + 1) % 65536  # Wrap at 16 bits
                     timestamp += timestamp_increment
-                    
+
                 except Exception as e:
                     print(f"Microphone error: {e}")
                     if not self.is_mic_on.is_set():
-                        break   
+                        break
         except Exception as e:
             print(f"Failed to initialize microphone: {e}")
         finally:
@@ -911,7 +913,7 @@ class Client:
                 mic_stream.close()
             except:
                 pass
-            
+
             try:
                 pa.terminate()
             except:
