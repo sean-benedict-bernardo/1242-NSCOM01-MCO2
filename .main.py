@@ -770,44 +770,152 @@ class Client:
             self.display_error("No active call.")
             return
 
+        print("Starting Mic")
+
+        buffer_size = 1024
+
         pa = pyaudio.PyAudio()
-        mic_stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=self.call["codec"]["rate"],
-            input=True,
-            frames_per_buffer=512,
-        )
-
-        seqnum = 0
-
-        # check if the mic is loud enough to be sent
-
-        def is_loud_enough(data):
-            """Check if the audio data is loud enough."""
-            threshold = 30
-            audio_data = np.frombuffer(data, dtype=np.int16)
-            volume = np.linalg.norm(audio_data) / len(audio_data)
-            return volume > threshold
 
         try:
-            while self.is_mic_on.is_set():
-                payload = mic_stream.read(512, exception_on_overflow=False)
+            # Open mic stream with higher quality settings
+            mic_stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=self.call["codec"]["channels"],
+                rate=self.call["codec"]["rate"], 
+                input=True,
+                frames_per_buffer=buffer_size,
+            )
+            
+            seqnum = 0
+            timestamp = 0
+            timestamp_increment = buffer_size
+            
+            # Calculate dynamic threshold based on background noise
+            def calculate_noise_threshold():
+                """Sample background noise to set dynamic threshold."""
+                print("Calibrating microphone...")
+                samples = []
+                # Take multiple samples to find noise floor
+                for _ in range(10):
+                    data = mic_stream.read(buffer_size, exception_on_overflow=False)
+                    audio_data = np.frombuffer(data, dtype=np.int16)
+                    volume = np.abs(audio_data).mean()
+                    samples.append(volume)
+                    time.sleep(0.05)
+                
+                # Set threshold above the average noise
+                noise_floor = sum(samples) / len(samples)
+                return max(noise_floor * 1.5, 35)  
+            
+            # Get initial noise threshold
+            threshold = calculate_noise_threshold()
+            print(f"Noise threshold set to: {threshold}")
+            
+            # Enhanced voice activity detection
+            def is_voice(data, dynamic_threshold):
+                """Improved voice activity detection with dynamic threshold."""
+                audio_data = np.frombuffer(data, dtype=np.int16)
+                volume = np.abs(audio_data).mean()
+                
+                # Detect voice with hysteresis to avoid choppy audio
+                if hasattr(is_voice, 'active'):
 
-                if not is_loud_enough(payload):
-                    continue
+                    if is_voice.active and volume > dynamic_threshold * 0.7:
+                        return True
+                    elif not is_voice.active and volume > dynamic_threshold:
+                        is_voice.active = True
+                        return True
+                    else:
+                        is_voice.active = False
+                        return False
+                else:
+                    is_voice.active = volume > dynamic_threshold
+                    return is_voice.active
+            
+            # Simple audio enhancement for clearer voice
+            def enhance_audio(data):
+                """Simple audio enhancement for clearer voice."""
+                audio_data = np.frombuffer(data, dtype=np.int16)
 
-                packet = RTPPacket()
-                packet.encode(2, 0, 0, 1, seqnum, 0, 10, 0, payload)
-                seqnum += 1
+                max_val = np.max(np.abs(audio_data))
+                if max_val > 100:  
 
-                self.rtp_send_socket.sendto(
-                    packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
-                )
+                    gain = min(26000 / max_val, 3.0)  
+                    audio_data = np.clip(audio_data * gain, -32767, 32767).astype(np.int16)
+                
+                return audio_data.tobytes()
+            
+            # VAD has memory of recent audio to reduce choppiness
+            silence_duration = 0
+            voice_buffer = []
+            
+            print("Microphone ready and sending")
+            
+            while self.is_mic_on.is_set() and self.active_call.is_set():
+                try:
+                    raw_data = mic_stream.read(buffer_size, exception_on_overflow=False)
+                
+
+                    if is_voice(raw_data, threshold):
+                        # Process audio for better quality
+                        enhanced_data = enhance_audio(raw_data)
+                        
+                        # Create and send RTP packet
+                        packet = RTPPacket()
+                        
+                        # Using positional arguments instead of keyword arguments
+                        # The correct order is: version, padding, extension, marker, seqnum, ssrc, payload_type, timestamp, payload
+                        packet.encode(
+                            2,               
+                            0,               
+                            0,          
+                            1,      
+                            seqnum,             
+                            self.call.get("ssrc", random.randint(1000, 9999)), 
+                            10,                 
+                            timestamp,          
+                            enhanced_data      
+                        )
+                        
+
+                        self.rtp_send_socket.sendto(
+                            packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
+                        )
+
+                        silence_duration = 0
+                        
+                    else:
+                        # Count silence frames
+                        silence_duration += 1
+                        
+                        # After 50 frames of silence, recalibrate noise threshold
+                        if silence_duration == 50:
+                            threshold = calculate_noise_threshold()
+                            print(f"Recalibrated noise threshold: {threshold}")
+                    
+                    # Update sequence number and timestamp
+                    seqnum = (seqnum + 1) % 65536  # Wrap at 16 bits
+                    timestamp += timestamp_increment
+                    
+                except Exception as e:
+                    print(f"Microphone error: {e}")
+                    if not self.is_mic_on.is_set():
+                        break   
+        except Exception as e:
+            print(f"Failed to initialize microphone: {e}")
         finally:
-            mic_stream.stop_stream()
-            mic_stream.close()
-            pa.terminate()
+            # Clean up resources
+            print("Closing microphone")
+            try:
+                mic_stream.stop_stream()
+                mic_stream.close()
+            except:
+                pass
+            
+            try:
+                pa.terminate()
+            except:
+                pass
 
     """
     RTCP Methods
