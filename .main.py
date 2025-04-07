@@ -64,8 +64,9 @@ class Client:
         self.active_call = threading.Event()
         self.is_mic_on = threading.Event()
         self.is_playing = threading.Event()
-
         self.awaiting_response = threading.Event()
+
+        self.update_value = threading.Lock()
 
         self.last_packet_time = time.time()
         self.last_rtcp_time = time.time()
@@ -817,7 +818,6 @@ class Client:
             self.rtp_send_socket.sendto(
                 packet.getpacket(), (self.dest_ip, self.call["rtp_port"])
             )
-            print(frame_num, "sent")
             self.rtcp_stats["packets_sent"] += 1
             self.rtcp_stats["octets_sent"] += len(frame)
             sleep_time = audio.FRAME_DURATION / 1000
@@ -996,61 +996,62 @@ class Client:
 
     def send_rtcp_sr(self):
         """Send RTCP SR packets."""
-        rtcp = RTCPPacket(
-            payload_type=200, report_count=1, length=0, ssrc=12435, version=2
-        )
-        rtcp.encode_sr(
-            self.rtcp_stats["last_packet_time"],
-            self.rtcp_stats["packets_sent"],
-            self.rtcp_stats["octets_sent"],
-        )
+        with self.update_value:
+            rtcp = RTCPPacket(
+                payload_type=200, report_count=1, length=0, ssrc=12435, version=2
+            )
+            rtcp.encode_sr(
+                self.rtcp_stats["last_packet_time"],
+                self.rtcp_stats["packets_sent"],
+                self.rtcp_stats["octets_sent"],
+            )
 
-        to_send = rtcp.getpacket()
+            to_send = rtcp.getpacket()
 
-        self.rtcp_socket.sendto(to_send, (self.dest_ip, self.call["rtcp_port"]))
+            self.rtcp_socket.sendto(to_send, (self.dest_ip, self.call["rtcp_port"]))
 
-        self.rtcp_stats["last_SR"] = int(time.time())
+            self.rtcp_stats["last_SR"] = int(time.time())
 
     def send_rtcp_rr(self):
         """Send RTCP RR packets."""
+        with self.update_value:
+            rtcp = RTCPPacket(
+                payload_type=201, report_count=1, length=0, ssrc=12435, version=2
+            )
 
-        rtcp = RTCPPacket(
-            payload_type=201, report_count=1, length=0, ssrc=12435, version=2
-        )
+            # perform calculations for the RTCP stats
 
-        # perform calculations for the RTCP stats
+            if self.received_stats["packets_received"] == 0:
+                self.rtcp_stats["fraction_lost"] = 0
+            else:
+                self.rtcp_stats["fraction_lost"] = (
+                    self.received_stats["packets_lost"]
+                    / self.received_stats["packets_received"]
+                )
+                self.rtcp_stats["fraction_lost"] = int(
+                    self.rtcp_stats["fraction_lost"] * 256
+                )
 
-        if self.received_stats["packets_received"] == 0:
+            if self.rtcp_stats["last_SR"] == 0:
+                dlsr = 0
+            else:
+                dlsr = int(time.time()) - self.rtcp_stats["last_SR"]
+
+            rtcp.encode_rr(
+                self.rtcp_stats["fraction_lost"],
+                self.rtcp_stats["packets_lost"],
+                self.rtcp_stats["packets_received"],
+                self.rtcp_stats["interarrival_jitter"],
+                self.rtcp_stats["last_SR"],
+                dlsr,
+            )
+
             self.rtcp_stats["fraction_lost"] = 0
-        else:
-            self.rtcp_stats["fraction_lost"] = (
-                self.received_stats["packets_lost"]
-                / self.received_stats["packets_received"]
+
+            self.rtcp_socket.sendto(
+                rtcp.getpacket(), (self.dest_ip, self.call["rtcp_port"])
             )
-            self.rtcp_stats["fraction_lost"] = int(
-                self.rtcp_stats["fraction_lost"] * 256
-            )
-
-        if self.rtcp_stats["last_SR"] == 0:
-            dlsr = 0
-        else:
-            dlsr = int(time.time()) - self.rtcp_stats["last_SR"]
-
-        rtcp.encode_rr(
-            self.rtcp_stats["fraction_lost"],
-            self.rtcp_stats["packets_lost"],
-            self.rtcp_stats["packets_received"],
-            self.rtcp_stats["interarrival_jitter"],
-            self.rtcp_stats["last_SR"],
-            dlsr,
-        )
-
-        self.rtcp_stats["fraction_lost"] = 0
-
-        self.rtcp_socket.sendto(
-            rtcp.getpacket(), (self.dest_ip, self.call["rtcp_port"])
-        )
-        self.last_rtcp_time = time.time()
+            self.last_rtcp_time = time.time()
 
     def listen_rtcp(self, port: int):
         self.rtcp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1063,10 +1064,6 @@ class Client:
                 packet = RTCPPacket(200)
                 packet.decode(data)
 
-                for attr, value in vars(packet).items():
-                    print(f"{attr}: {value}", end=" | ")
-                print()
-
                 if packet.payload_type == 200:
                     # sender report
                     self.received_stats["packets_sent"] = packet.sender_packet_count
@@ -1074,9 +1071,9 @@ class Client:
 
                     print(
                         "=== Sender Report ===",
-                        f"Sender SSRC: {packet.sender_ssrc}",
-                        f"Sender NTP Timestamp: {packet.sender_ntp_timestamp}",
-                        f"Sender RTP Timestamp: {packet.sender_rtp_timestamp}",
+                        f"Sender SSRC: {packet.ssrc}",
+                        f"Sender NTP Timestamp: {packet.ntp_timestamp}",
+                        f"Sender RTP Timestamp: {packet.rtp_timestamp}",
                         f"Sender Packet Count: {packet.sender_packet_count}",
                         f"Sender Octet Count: {packet.sender_octet_count}",
                         "",
