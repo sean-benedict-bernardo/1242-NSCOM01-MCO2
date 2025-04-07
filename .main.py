@@ -243,6 +243,7 @@ class Client:
     def accept_call(self, sip_packet: SIPPacket):
         """Accept an incoming call."""
         self.active_call = True
+        self.dest_ip = sip_packet.src_ip
         self.call["rtp_port"] = sip_packet.body["m"]["port"]
         self.call["rtcp_port"] = sip_packet.body["m"]["port"] + 1
         self.call["Call-ID"] = sip_packet.call_id
@@ -270,9 +271,9 @@ class Client:
             self.display_error("File not found.")
         else:
             self.stop_send.clear()
-            threading.Thread(
-                target=self.send_rtp, args=(file_path,), daemon=True
-            ).start()
+            send_rtp_thread = threading.Thread(target=self.send_rtp, args=(file_path,))
+            send_rtp_thread.start()
+            send_rtp_thread.join()
 
     """
     SIP Methods
@@ -335,6 +336,7 @@ class Client:
         print(invite_msg.getpacket().decode())
 
         self.sip_socket.sendto(invite_msg.getpacket(), addr)
+        # instruct listen sip to wait for a response
 
     def handle_sip(self, message: SIPPacket, addr: tuple):
         """Handle SIP messages."""
@@ -484,6 +486,8 @@ class Client:
 
         current_frame = 0
 
+        audio_player = AudioPlayer()
+
         while self.keep_threads:
             try:
                 data, addr = self.rtp_socket.recvfrom(4096)
@@ -506,7 +510,7 @@ class Client:
 
                 self.last_packet_time = time.time()
 
-                self.audio_player.play_audio_packet(payload)
+                audio_player.play_audio_packet(payload)
             except socket.timeout:
                 pass  # do nothing
             except ConnectionResetError:
@@ -529,7 +533,6 @@ class Client:
             return
 
         while True:
-            print(self.call["rtp_port"])
             if self.call["rtp_port"] == 0:
                 return
 
