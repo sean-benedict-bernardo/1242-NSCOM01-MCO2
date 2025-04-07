@@ -94,7 +94,7 @@ class Client:
             "fraction_lost": 0,
             "last_seqnum": 0,
             "interarrival_jitter": 0,
-            "last_SR": 0,            
+            "last_SR": 0,
         }
 
         self.call = {}
@@ -334,7 +334,12 @@ class Client:
 
         self.rtp_server = threading.Thread(
             target=self.listen_rtp,
-            args=(self.call["rtp_port"], self.call["codec"]["type"], self.call["codec"]["channels"], self.call["codec"]["rate"]),
+            args=(
+                self.call["rtp_port"],
+                self.call["codec"]["type"],
+                self.call["codec"]["channels"],
+                self.call["codec"]["rate"],
+            ),
             daemon=True,
         )
 
@@ -588,7 +593,10 @@ class Client:
                     log_message(addr, "SIP Sent", response.getpacket().decode())
 
                 case "ACK":
-                    if self.current_state == self.CALLING or self.current_state == self.IDLE:
+                    if (
+                        self.current_state == self.CALLING
+                        or self.current_state == self.IDLE
+                    ):
                         self.display_message("Call Accepted. Starting RTP stream.")
                         self.accept_call(message)
                     elif self.current_state == self.IN_CALL:
@@ -716,7 +724,6 @@ class Client:
             if time.time() - self.rtcp_stats["last_SR"] > 5:
                 self.send_rtcp_rr()
                 self.send_rtcp_sr()
-                
 
             try:
                 data, addr = self.rtp_listen_socket.recvfrom(RTP_PACKET_SIZE)
@@ -767,7 +774,9 @@ class Client:
 
         audio = None
         try:
-            audio = AudioStream(filename, self.call["codec"]["channels"], self.call["codec"]["rate"])
+            audio = AudioStream(
+                filename, self.call["codec"]["channels"], self.call["codec"]["rate"]
+            )
         except Exception as e:
             self.display_error(f"Error opening audio file: {e}")
             return
@@ -827,7 +836,7 @@ class Client:
             audio_data = np.frombuffer(data, dtype=np.int16)
             volume = np.linalg.norm(audio_data) / len(audio_data)
             return volume > threshold
-        
+
         # flushing mechanism to prevent choppy mic audio
         packet = []
 
@@ -858,9 +867,13 @@ class Client:
 
     def send_rtcp_sr(self):
         """Send RTCP SR packets."""
-        rtcp = RTCPPacket(200, 1, 0, 12435, 2)
+        rtcp = RTCPPacket(
+            payload_type=200, report_count=1, length=0, ssrc=12435, version=2
+        )
         rtcp.encode_sr(
-            self.rtcp_stats["last_packet_time"], self.rtcp_stats["packets_sent"], self.rtcp_stats["octets_sent"]
+            self.rtcp_stats["last_packet_time"],
+            self.rtcp_stats["packets_sent"],
+            self.rtcp_stats["octets_sent"],
         )
         self.rtcp_socket.sendto(
             rtcp.getpacket(), (self.dest_ip, self.call["rtcp_port"])
@@ -870,8 +883,9 @@ class Client:
 
     def send_rtcp_rr(self):
         """Send RTCP RR packets."""
-        rtcp = RTCPPacket(201, 1, 0, 12435, 2)
-
+        rtcp = RTCPPacket(
+            payload_type=201, report_count=1, length=0, ssrc=12435, version=2
+        )
 
         # perform calculations for the RTCP stats
 
@@ -882,13 +896,15 @@ class Client:
                 self.received_stats["packets_lost"]
                 / self.received_stats["packets_received"]
             )
-            self.rtcp_stats["fraction_lost"] = int(self.rtcp_stats["fraction_lost"] * 256)
+            self.rtcp_stats["fraction_lost"] = int(
+                self.rtcp_stats["fraction_lost"] * 256
+            )
 
         if self.rtcp_stats["last_SR"] == 0:
             dlsr = 0
         else:
             dlsr = int(time.time()) - self.rtcp_stats["last_SR"]
-        
+
         rtcp.encode_rr(
             self.rtcp_stats["fraction_lost"],
             self.rtcp_stats["packets_received"],
@@ -926,7 +942,9 @@ class Client:
                     # receiver report
                     packet.decode_rr()
                     self.received_stats["fraction_lost"] = packet.fraction_lost
-                    self.received_stats["interarrival_jitter"] = packet.interarrival_jitter
+                    self.received_stats["interarrival_jitter"] = (
+                        packet.interarrival_jitter
+                    )
                     self.received_stats["last_SR"] = packet.last_sr
                     self.received_stats["dlsr"] = packet.dlsr
                 # print RTCP packet
@@ -943,10 +961,10 @@ class Client:
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1:
         host_ip = sys.argv[1]
     else:
         host_ip = socket.gethostbyname(socket.gethostname())
-
 
     client = Client(host_ip)
