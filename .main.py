@@ -34,14 +34,14 @@ class Client:
 
     SIP_PORT = 5060
 
-    def __init__(self):
+    def __init__(self, host_ip: str = socket.gethostbyname(socket.gethostname())):
         make_dir()
 
         # set up the client state
         self.current_state = self.IDLE
 
         # ip address
-        self.ip = socket.gethostbyname(socket.gethostname())
+        self.ip = host_ip
         self.dest_ip = ""
 
         # sip socket
@@ -458,7 +458,11 @@ class Client:
 
         log_message(addr, "SIP Received", message.getpacket().decode())
 
-        if self.current_state == self.IN_CALL and message.method != "BYE":
+        if (
+            self.current_state == self.IN_CALL
+            and hasattr(message, "method")
+            and message.method == "INVITE"
+        ):
             # send 486: Busy Here
             response = SIPPacket()
             response.encode(
@@ -478,7 +482,7 @@ class Client:
         rtp_port = 0
         codec_type, codec_rate, codec_channels = "", 0, 0
 
-        if message.body and message.body["m"] and message.body["a"]:
+        if hasattr(message, "body") and message.body["m"] and message.body["a"]:
             rtp_port = message.body["m"]["port"]
             codec_type = message.body["a"]["codec_type"]
             codec_rate = message.body["a"]["codec_rate"]
@@ -797,4 +801,11 @@ class Client:
 
 
 if __name__ == "__main__":
-    client = Client()
+    import sys
+    if len(sys.argv) > 1:
+        host_ip = sys.argv[1]
+    else:
+        host_ip = socket.gethostbyname(socket.gethostname())
+
+
+    client = Client(host_ip)
