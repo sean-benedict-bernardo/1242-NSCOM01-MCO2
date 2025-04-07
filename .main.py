@@ -79,7 +79,7 @@ class Client:
             "packets_lost": 0,
             "fraction_lost": 0,
             "last_seqnum": 0,
-            "jitter": 0,
+            "interarrival_jitter": 0,
             "last_SR": 0,
         }
 
@@ -93,7 +93,7 @@ class Client:
             "packets_lost": 0,
             "fraction_lost": 0,
             "last_seqnum": 0,
-            "jitter": 0,
+            "interarrival_jitter": 0,
             "last_SR": 0,            
         }
 
@@ -713,7 +713,7 @@ class Client:
 
         while self.active_call.is_set():
             # check if more than 5 seconds since the last rtcp packet
-            if time.time() - self.rtcp_stats["last_sr"] > 5:
+            if time.time() - self.rtcp_stats["last_SR"] > 5:
                 self.send_rtcp_rr()
                 self.send_rtcp_sr()
                 
@@ -866,7 +866,7 @@ class Client:
             rtcp.getpacket(), (self.dest_ip, self.call["rtcp_port"])
         )
 
-        self.rtcp_stats["last_sr"] = int(time.time())
+        self.rtcp_stats["last_SR"] = int(time.time())
 
     def send_rtcp_rr(self):
         """Send RTCP RR packets."""
@@ -891,7 +891,7 @@ class Client:
         
         rtcp.encode_rr(
             self.rtcp_stats["fraction_lost"],
-            self.rtcp_stats["packets"],
+            self.rtcp_stats["packets_received"],
             self.rtcp_stats["packets_lost"],
             self.rtcp_stats["interarrival_jitter"],
             self.rtcp_stats["last_SR"],
@@ -925,10 +925,8 @@ class Client:
                 elif packet.payload_type == 201:
                     # receiver report
                     packet.decode_rr()
-                    self.received_stats["packets_received"] = packet.receiver_packet_count
-                    self.received_stats["packets_lost"] = packet.receiver_packet_count - packet.receiver_packet_count
                     self.received_stats["fraction_lost"] = packet.fraction_lost
-                    self.received_stats["jitter"] = packet.jitter
+                    self.received_stats["interarrival_jitter"] = packet.interarrival_jitter
                     self.received_stats["last_SR"] = packet.last_sr
                     self.received_stats["dlsr"] = packet.dlsr
                 # print RTCP packet
