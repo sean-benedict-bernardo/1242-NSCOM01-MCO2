@@ -440,7 +440,6 @@ class RTCPPacket:
 
     def _decode_report_block(self, payload: bytes) -> None:
         """Decode the RTCP report block."""
-        print(payload)
 
         # decode SSRC_1
         self.ssrc = int.from_bytes(payload[0:4], byteorder="big")
@@ -481,8 +480,9 @@ class RTCPPacket:
 
         # Encode NTP timestamp in payload
         self.payload[0:4] = ntp_timestamp().to_bytes(4, byteorder="big")
-        self.payload[4:8] = int(0).to_bytes(4, byteorder="big")  # RTP timestamp
+        self.payload[4:8] = int(0).to_bytes(4, byteorder="big")
 
+        # RTP timestamp
         self.payload[8:12] = last_packet_time.to_bytes(4, byteorder="big")
         self.payload[12:16] = packet_count.to_bytes(4, byteorder="big")
         self.payload[16:20] = octet_count.to_bytes(4, byteorder="big")

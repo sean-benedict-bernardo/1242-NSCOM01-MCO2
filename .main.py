@@ -1011,7 +1011,7 @@ class Client:
                 payload_type=200, report_count=1, length=0, ssrc=12435, version=2
             )
             rtcp.encode_sr(
-                self.rtcp_stats["last_packet_time"],
+                self.last_rtcp_time,
                 self.rtcp_stats["packets_sent"],
                 self.rtcp_stats["octets_sent"],
             )
@@ -1081,36 +1081,40 @@ class Client:
 
                     print(
                         "=== Sender Report ===",
-                        f"Sender SSRC: {packet.ssrc}",
-                        f"Sender NTP Timestamp: {packet.ntp_timestamp}",
-                        f"Sender RTP Timestamp: {packet.rtp_timestamp}",
-                        f"Sender Packet Count: {packet.sender_packet_count}",
-                        f"Sender Octet Count: {packet.sender_octet_count}",
+                        f"SSRC: {packet.ssrc}",
+                        f"NTP Timestamp: {packet.ntp_timestamp}",
+                        f"Last RTP Timestamp: {packet.rtp_timestamp}",
+                        f"Packet Count: {packet.sender_packet_count}",
+                        f"Octet Count: {packet.sender_octet_count}",
                         "",
                         sep="\n",
                     )
 
                 elif packet.payload_type == 201:
+                    # it's 5:30 AM i could not be bothered to implement the rest of the RTCP packet types
+
                     # receiver report
-                    self.received_stats["last_SR"] = packet.last_sr
-                    self.received_stats["fraction_lost"] = packet.fraction_lost
-                    self.received_stats["interarrival_jitter"] = (
-                        packet.interarrival_jitter
-                    )
-                    self.received_stats["dlsr"] = packet.dlsr
+                    # self.received_stats["last_SR"] = packet.last_sr
+                    # self.received_stats["fraction_lost"] = packet.fraction_lost
+                    # self.received_stats["interarrival_jitter"] = (
+                    #     packet.interarrival_jitter
+                    # )
+                    # self.received_stats["dlsr"] = packet.dlsr
 
                     
-                    print(
-                        "=== Receiver Report ===",
-                        f"Sender SSRC: {packet.sender_ssrc}",
-                        f"Fraction Lost: {packet.fraction_lost}",
-                        f"Packets Lost: {packet.packets_lost}",
-                        f"Highest Seqnum: {packet.highest_seqnum}",
-                        f"Jitter: {packet.jitter}",
-                        f"Last SR: {packet.last_sr}",                        
-                        "",
-                        sep="\n",
-                    )
+                    # print(
+                    #     "=== Receiver Report ===",
+                    #     f"Sender SSRC: {packet.ssrc}",
+                    #     f"Fraction Lost: {packet.fraction_lost}",
+                    #     f"Packets Lost: {packet.packets_lost}",
+                    #     f"Highest Seqnum: {packet.highest_seqnum}",
+                    #     f"Jitter: {packet.jitter}",
+                    #     f"Last SR: {packet.last_sr}",                        
+                    #     "",
+                    #     sep="\n",
+                    # )
+
+                    pass
             except socket.timeout:
                 continue
             except ConnectionResetError:
